@@ -344,28 +344,49 @@ export default function PantallaProgramador() {
                                 </select>
                               </td>
                               
-                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                                <span style={{ 
-                                  padding: '6px 12px', borderRadius: '20px', 
-                                  backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : '#d4edda',
-                                  color: pedido.estado === 'Pendiente' ? '#856404' : '#155724',
-                                  fontWeight: 'bold', fontSize: '0.85rem'
-                                }}>
-                                  {pedido.estado}
+                              {/* 1. CELDA DE ESTADO CON SOPORTE PARA FINALIZADA PARCIAL */}
+                            <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                              <span style={{ 
+                                padding: '6px 12px', borderRadius: '20px', 
+                                backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
+                                color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
+                                fontWeight: 'bold', fontSize: '0.85rem'
+                              }}>
+                                {pedido.estado}
+                              </span>
+
+                              {/* ⚠️ ETIQUETA ROJA DE FALTANTE CUANDO CIERRA PARCIAL */}
+                              {pedido.estado === 'Finalizada Parcial' && (
+                                <div style={{ marginTop: '6px' }}>
+                                  <span style={{ 
+                                    backgroundColor: '#dc3545', 
+                                    color: 'white', 
+                                    padding: '4px 8px', 
+                                    borderRadius: '4px', 
+                                    fontWeight: 'bold', 
+                                    fontSize: '0.75rem',
+                                    display: 'inline-block'
+                                  }}>
+                                    ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+                            
+                            {/* 2. CELDA DE ACCIÓN */}
+                            <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                              {pedido.estado === 'Pendiente' ? (
+                                <button 
+                                  onClick={() => habilitarOrden(pedido.id)}
+                                  style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                                  Enviar a Planta
+                                </button>
+                              ) : (
+                                <span style={{ color: pedido.estado === 'Finalizada Parcial' ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }}>
+                                  {pedido.estado === 'Finalizada Parcial' ? '⚡' : '✓'}
                                 </span>
-                              </td>
-                              
-                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                                {pedido.estado === 'Pendiente' ? (
-                                  <button 
-                                    onClick={() => habilitarOrden(pedido.id)}
-                                    style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                                    Enviar a Planta
-                                  </button>
-                                ) : (
-                                  <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }}>✓</span>
-                                )}
-                              </td>
+                              )}
+                            </td>
                             </tr>
                           )}
                         </Draggable>
