@@ -191,7 +191,10 @@ export default function PantallaMaquinista() {
   const cargarColaDeTrabajo = async (maquina) => {
     if (!maquina) return;
     try {
-      const respuesta = await apiFetch(`/api/pedidos/cola/${encodeURIComponent(maquina)}`);
+      // Evita que el navegador de la tablet congele respuestas viejas en caché
+      const respuesta = await apiFetch(`/api/pedidos/cola/${encodeURIComponent(maquina)}`, {
+        cache: 'no-store'
+      });
       if (respuesta.ok) {
         const datos = await respuesta.json();
         const soloHabilitadas = datos.filter(p => 

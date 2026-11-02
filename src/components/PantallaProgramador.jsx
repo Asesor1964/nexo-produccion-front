@@ -161,7 +161,7 @@ export default function PantallaProgramador() {
 
   const habilitarOrden = async (id) => {
     const pedidoAEnviar = pedidos.find(p => p.id === id);
-    if (!pedidoAEnviar.maquina) {
+    if (!pedidoAEnviar || !pedidoAEnviar.maquina) {
       alert("⚠️ Debe asignar una Máquina Destino antes de enviar la orden a planta.");
       return;
     }
@@ -173,7 +173,10 @@ export default function PantallaProgramador() {
       await apiFetch(`/api/pedidos/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: 'Habilitada' }),
+        body: JSON.stringify({ 
+          estado: 'Habilitada',
+          maquina_asignada: pedidoAEnviar.maquina
+        }),
       });
     } catch (error) {
       console.error('Error al habilitar orden en BD', error);
