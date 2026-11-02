@@ -13,14 +13,15 @@ export default function PantallaProgramador() {
       if (respuesta.ok) {
         const data = await respuesta.json();
         const pedidosFormateados = data
-          .map(p => ({
-            id: p.id,
-            cliente: p.cliente || 'Sin cliente',
-            producto: p.producto_descripcion || 'Sin descripción',
-            estado: p.estado || 'Pendiente',
-            maquina: p.maquina_asignada || 'COR-JS',
-            prioridad: p.prioridad_secuencia || 999
-          }))
+  .map(p => ({
+    id: p.id,
+    cliente: p.cliente || 'Sin cliente',
+    producto: p.producto_descripcion || 'Sin descripción',
+    estado: p.estado || 'Pendiente',
+    maquina: p.maquina_asignada || 'COR-JS',
+    prioridad: p.prioridad_secuencia || 999, 
+    cantidad_faltante: p.cantidad_faltante || 0
+  }))
           .sort((a, b) => a.prioridad - b.prioridad);
           
         setPedidos(pedidosFormateados);
