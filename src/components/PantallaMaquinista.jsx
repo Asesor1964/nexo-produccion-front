@@ -5,6 +5,74 @@ import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
 const STORAGE_KEY = 'nexo_estado_maquinista_v1';
 
+// Respaldo completo de las 64 incidencias oficiales (Tipos_Incidencias.csv)
+const INCIDENCIAS_RESPALDO = [
+  "01- Cambio de Orden",
+  "02- Falta de Personal",
+  "03- Limpiar Refile",
+  "04- Falla Eléctrica",
+  "05- Atascamiento",
+  "06- Mantenimiento Mecánico Correctivo",
+  "08- Cambio Rollo Flejadora",
+  "09- Pausa y Refrigerios",
+  "12- Limpieza Circuito de Tintas",
+  "13- Limpieza Fin de Jornada",
+  "15- Problemas en Flejadora",
+  "18- Clisee Mal Premontado (Proveedor)",
+  "19- Correas Pegadora",
+  "20- Rotación de Grabados",
+  "21- Falla de Instrumentos",
+  "22- Capacitación del Personal",
+  "23- Troqueles sueltos-Falta de gomas-Torcedura de cuchillas",
+  "25- Clisés sueltos (varios productos)",
+  "28- Rotura de Troquel",
+  "29- Rotura de Clisée",
+  "32- Esperar planchas de Linea de Corrugado",
+  "33- Cambio de Máquina (pasar personal)",
+  "34- Cambio de Programa por pedido de Ventas",
+  "35- Limpieza Ruedas de Tiro",
+  "36- Cambio de Racla",
+  "37- Cambio cuchillas Chapetón",
+  "39- Falta de aire",
+  "41- Limpieza de Clisée",
+  "42- Cambio bandas cuerpo troquelador",
+  "44- Problemas en Colero",
+  "46- Problemas en bomba de tintero",
+  "47- Cambio tacho de adhesivo",
+  "48- Relevos en Corrugado",
+  "49- Lavado bandejas de tinteros",
+  "50- Clisee, preparar y encintar",
+  "51- Corte de Energía Eléctrica",
+  "55- Esperar confirmación de Orden de Trabajo",
+  "56- Seleccionar Planchas",
+  "58- Planchas despegadas, separa y seleccionar",
+  "60- Reposicionar clises (Acomodar)",
+  "61- Prensa Fardos",
+  "62- Cambio de Trazabilidad",
+  "63- Rotación Bandas Poliuretano",
+  "64- Falta de autoelevador",
+  "65- Se coloca goma a troquel",
+  "66- Reunión de Personal",
+  "68- Lavado de rolo anilox",
+  "69- Recuperación de Cajas.",
+  "70- Preparación de tintas.",
+  "72- Esperar planchas impresas.",
+  "73- Cambio de Tinta.",
+  "74- Se saco muestras.",
+  "75- Falta de Tarimas.",
+  "76- Buscar Planchas",
+  "77- Falta de Tintas",
+  "82- Buscar troquel",
+  "83- \"Varios\" Operativo",
+  "85- \"Varios\" Alistamiento",
+  "86- \"Varios\" Defecto Corrugado",
+  "87- Capacitación del Personal Seguridad Industrial",
+  "88- Arranque después de Turno Inactivo",
+  "89- Traslado de personal Con carga de máquina",
+  "90- Traslado de personal Sin carga de máquina",
+  "91- Falta de Personal en Planta"
+];
+
 const CIP_INICIAL = {
   supervisor: '',
   turno: 'M',
@@ -96,6 +164,7 @@ export default function PantallaMaquinista() {
 
   const [listaMaquinas, setListaMaquinas] = useState([]);
   const [listaOperadores, setListaOperadores] = useState([]);
+  const [listaCodigosParada, setListaCodigosParada] = useState(INCIDENCIAS_RESPALDO);
 
   useEffect(() => {
     const estadoParaGuardar = {
@@ -143,9 +212,32 @@ export default function PantallaMaquinista() {
       try {
         const resMaquinas = await apiFetch('/api/pedidos/recursos/maquinas');
         if (resMaquinas.ok) setListaMaquinas(await resMaquinas.json());
+        
         const resOperadores = await apiFetch('/api/pedidos/recursos/operadores');
         if (resOperadores.ok) setListaOperadores(await resOperadores.json());
-      } catch (error) { console.error("Error al cargar maestros:", error); }
+
+        // Carga los códigos de parada directamente desde la tabla codigos_parada en PostgreSQL
+        const resParadas = await apiFetch('/api/pedidos/recursos/paradas');
+        if (resParadas.ok) {
+          const dataParadas = await resParadas.json();
+          if (Array.isArray(dataParadas) && dataParadas.length > 0) {
+            const formateadas = dataParadas.map(item => {
+              if (typeof item === 'string') return item;
+              const desc = (item.descripcion || '').trim();
+              const cod = (item.codigo || '').trim();
+              // Si la descripción ya comienza con el número (ej: "01- Cambio de Orden"), la usamos directo
+              if (/^\d+/.test(desc)) return desc;
+              return cod ? `${cod} - ${desc}` : desc;
+            }).filter(Boolean);
+
+            if (formateadas.length > 0) {
+              setListaCodigosParada(formateadas);
+            }
+          }
+        }
+      } catch (error) { 
+        console.error("Error al cargar maestros:", error); 
+      }
     };
     cargarMaestros();
   }, []);
@@ -191,7 +283,6 @@ export default function PantallaMaquinista() {
   const cargarColaDeTrabajo = async (maquina) => {
     if (!maquina) return;
     try {
-      // Evita que el navegador de la tablet congele respuestas viejas en caché
       const respuesta = await apiFetch(`/api/pedidos/cola/${encodeURIComponent(maquina)}`, {
         cache: 'no-store'
       });
@@ -536,7 +627,7 @@ export default function PantallaMaquinista() {
             <button onClick={cancelarOrden} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>VOLVER A LA COLA</button>
             <button onClick={iniciarSetup} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>▶ COMENZAR SET-UP (Preparación)</button>
           </div>
-        </div>            
+        </div>          
       )}
 
       {enSetup && ordenActiva && (
@@ -558,10 +649,10 @@ export default function PantallaMaquinista() {
               <div style={{ marginTop: '15px', padding: '15px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '8px' }}>
                 <label style={{ display: 'block', marginBottom: '10px' }}>Obligatorio: Indique por qué se excedió el tiempo:</label>
                 <select value={motivoDemoraSetup} onChange={(e) => setMotivoDemoraSetup(e.target.value)} style={{ width: '100%', padding: '10px', fontSize: '1.1rem', borderRadius: '5px' }}>
-                  <option value="">-- Seleccione justificación --</option>
-                  <option value="Falla Eléctrica">Inconvenientes Eléctricos</option>
-                  <option value="Falla Mecánica">Inconvenientes Mecánicos</option>
-                  <option value="Falta de Insumos">Espera por Tintas o Material</option>
+                  <option value="">-- Seleccione justificación ({listaCodigosParada.length} códigos) --</option>
+                  {listaCodigosParada.map((inc, idx) => (
+                    <option key={idx} value={inc}>{inc}</option>
+                  ))}
                 </select>
               </div>
             )}
@@ -687,11 +778,11 @@ export default function PantallaMaquinista() {
               <label>Hora de Fin:</label>
               <input type="time" required value={nuevaParada.horaFinParada} onChange={(e) => setNuevaParada({...nuevaParada, horaFinParada: e.target.value})} style={{ width: '100%', padding: '15px', fontSize: '1.5rem', marginBottom: '20px' }} />
               <label>Código de Parada:</label>
-              <select required value={nuevaParada.codigo} onChange={(e) => setNuevaParada({...nuevaParada, codigo: e.target.value})} style={{ width: '100%', padding: '15px', fontSize: '1.2rem', marginBottom: '30px' }}>
-                <option value="" disabled>-- Seleccione un código --</option>
-                <option value="01 - Cambio de Orden">01 - Cambio de Orden</option>
-                <option value="04 - Falla Eléctrica">04 - Falla Eléctrica</option>
-                <option value="06 - Mantenimiento Mecánico">06 - Mantenimiento Mecánico</option>
+              <select required value={nuevaParada.codigo} onChange={(e) => setNuevaParada({...nuevaParada, codigo: e.target.value})} style={{ width: '100%', padding: '15px', fontSize: '1.1rem', marginBottom: '30px' }}>
+                <option value="" disabled>-- Seleccione un código ({listaCodigosParada.length} disponibles) --</option>
+                {listaCodigosParada.map((inc, idx) => (
+                  <option key={idx} value={inc}>{inc}</option>
+                ))}
               </select>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <button type="button" onClick={() => setMostrarModalParada(false)} style={{ padding: '15px 20px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>Cancelar</button>
