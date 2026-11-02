@@ -13,15 +13,15 @@ export default function PantallaProgramador() {
       if (respuesta.ok) {
         const data = await respuesta.json();
         const pedidosFormateados = data
-  .map(p => ({
-    id: p.id,
-    cliente: p.cliente || 'Sin cliente',
-    producto: p.producto_descripcion || 'Sin descripción',
-    estado: p.estado || 'Pendiente',
-    maquina: p.maquina_asignada || 'COR-JS',
-    prioridad: p.prioridad_secuencia || 999, 
-    cantidad_faltante: p.cantidad_faltante || 0
-  }))
+          .map(p => ({
+            id: p.id,
+            cliente: p.cliente || 'Sin cliente',
+            producto: p.producto_descripcion || 'Sin descripción',
+            estado: p.estado || 'Pendiente',
+            maquina: p.maquina_asignada || 'COR-JS',
+            prioridad: p.prioridad_secuencia || 999, 
+            cantidad_faltante: p.cantidad_faltante || 0
+          }))
           .sort((a, b) => a.prioridad - b.prioridad);
           
         setPedidos(pedidosFormateados);
@@ -35,12 +35,55 @@ export default function PantallaProgramador() {
     cargarPedidosDesdeBD();
   }, []);
 
+  // 🎯 GESTIÓN DE DECISIÓN COMERCIAL SOBRE EL SALDO FALTANTE
+  const gestionarFaltante = async (pedido, decision) => {
+    if (decision === 'reprogramar') {
+      const confirmar = window.confirm(`¿Desea reasignar el saldo pendiente de ${pedido.cantidad_faltante} cajas para la orden #${pedido.id}?`);
+      if (!confirmar) return;
+
+      try {
+        const respuesta = await apiFetch(`/api/pedidos/${pedido.id}/reprogramar-faltante`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cantidad_faltante: pedido.cantidad_faltante })
+        });
+        if (respuesta.ok) {
+          alert("✅ Saldo pendiente reprogramado con éxito en la cola de producción.");
+          cargarPedidosDesdeBD();
+        } else {
+          alert("❌ Error al reprogramar el faltante.");
+        }
+      } catch (error) {
+        console.error("Error de conexión:", error);
+      }
+    } else if (decision === 'cerrar') {
+      const confirmar = window.confirm(`¿Seguro que desea dar por cerrado y archivado el faltante de la orden #${pedido.id} por acuerdo comercial?`);
+      if (!confirmar) return;
+
+      try {
+        const respuesta = await apiFetch(`/api/pedidos/${pedido.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ estado: 'Cerrado por Acuerdo' })
+        });
+        if (respuesta.ok) {
+          alert("📁 Orden archivada sin pendientes.");
+          cargarPedidosDesdeBD();
+        } else {
+          alert("❌ Error al archivar la orden.");
+        }
+      } catch (error) {
+        console.error("Error de conexión:", error);
+      }
+    }
+  };
+
   // 🎯 EXTRAER RUTAS ÚNICAS Y LIMPIAS DIRECTAMENTE DE LOS PEDIDOS CARGADOS
   const rutasUnicasPlanta = Array.from(
     new Set(
       pedidos
         .map(p => p.maquina ? p.maquina.trim().toUpperCase() : '')
-        .filter(m => m && isNaN(m) && !m.includes(',')) // Descarta vacíos, números puros y decimales
+        .filter(m => m && isNaN(m) && !m.includes(','))
     )
   ).sort();
 
@@ -244,7 +287,6 @@ export default function PantallaProgramador() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
           <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá para reordenar)</h3>
           
-          {/* 🔍 BARRA DE FILTROS RÁPIDOS LIMPIA Y PROFESIONAL */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Ruta:</span>
             <button 
@@ -345,49 +387,66 @@ export default function PantallaProgramador() {
                                 </select>
                               </td>
                               
-                              {/* 1. CELDA DE ESTADO CON SOPORTE PARA FINALIZADA PARCIAL */}
-                            <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                              <span style={{ 
-                                padding: '6px 12px', borderRadius: '20px', 
-                                backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
-                                color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
-                                fontWeight: 'bold', fontSize: '0.85rem'
-                              }}>
-                                {pedido.estado}
-                              </span>
-
-                              {/* ⚠️ ETIQUETA ROJA DE FALTANTE CUANDO CIERRA PARCIAL */}
-                              {pedido.estado === 'Finalizada Parcial' && (
-                                <div style={{ marginTop: '6px' }}>
-                                  <span style={{ 
-                                    backgroundColor: '#dc3545', 
-                                    color: 'white', 
-                                    padding: '4px 8px', 
-                                    borderRadius: '4px', 
-                                    fontWeight: 'bold', 
-                                    fontSize: '0.75rem',
-                                    display: 'inline-block'
-                                  }}>
-                                    ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
-                                  </span>
-                                </div>
-                              )}
-                            </td>
-                            
-                            {/* 2. CELDA DE ACCIÓN */}
-                            <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                              {pedido.estado === 'Pendiente' ? (
-                                <button 
-                                  onClick={() => habilitarOrden(pedido.id)}
-                                  style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                                  Enviar a Planta
-                                </button>
-                              ) : (
-                                <span style={{ color: pedido.estado === 'Finalizada Parcial' ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                                  {pedido.estado === 'Finalizada Parcial' ? '⚡' : '✓'}
+                              {/* 1. CELDA DE ESTADO CON SOPORTE PARA FINALIZADA PARCIAL Y BOTONES DE DECISIÓN */}
+                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                <span style={{ 
+                                  padding: '6px 12px', borderRadius: '20px', 
+                                  backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
+                                  color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
+                                  fontWeight: 'bold', fontSize: '0.85rem'
+                                }}>
+                                  {pedido.estado}
                                 </span>
-                              )}
-                            </td>
+
+                                {/* ⚠️ ETIQUETA ROJA DE FALTANTE CON BOTONES DE ACCIÓN RÁPIDA */}
+                                {pedido.estado === 'Finalizada Parcial' && (
+                                  <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
+                                    <span style={{ 
+                                      backgroundColor: '#dc3545', 
+                                      color: 'white', 
+                                      padding: '4px 8px', 
+                                      borderRadius: '4px', 
+                                      fontWeight: 'bold', 
+                                      fontSize: '0.75rem',
+                                      display: 'inline-block',
+                                      marginBottom: '6px'
+                                    }}>
+                                      ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
+                                    </span>
+
+                                    <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                      <button 
+                                        onClick={() => gestionarFaltante(pedido, 'reprogramar')}
+                                        style={{ padding: '4px 8px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                        title="Generar nueva orden o sumar a cola por el saldo pendiente">
+                                        🔄 Reprogramar
+                                      </button>
+
+                                      <button 
+                                        onClick={() => gestionarFaltante(pedido, 'cerrar')}
+                                        style={{ padding: '4px 8px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                        title="Cerrar definitivamente por acuerdo comercial con el cliente">
+                                        📁 Archivar / Cerrar
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                              
+                              {/* 2. CELDA DE ACCIÓN */}
+                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                {pedido.estado === 'Pendiente' ? (
+                                  <button 
+                                    onClick={() => habilitarOrden(pedido.id)}
+                                    style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                                    Enviar a Planta
+                                  </button>
+                                ) : (
+                                  <span style={{ color: pedido.estado === 'Finalizada Parcial' ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }}>
+                                    {pedido.estado === 'Finalizada Parcial' ? '⚡' : '✓'}
+                                  </span>
+                                )}
+                              </td>
                             </tr>
                           )}
                         </Draggable>
