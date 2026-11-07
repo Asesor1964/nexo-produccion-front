@@ -87,40 +87,82 @@ export default function PantallaProgramador() {
     )
   ).sort();
 
+  const limpiarHeader = (texto) => {
+    return String(texto || '')
+      .replace(/^\uFEFF/, '') // Quita el BOM de UTF-8
+      .replace(/"/g, '')      // Quita comillas dobles
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Quita tildes
+      .trim();
+  };
+
   const procesarCSV = (e) => {
     e.preventDefault();
     if (!archivo) return;
 
     const lector = new FileReader();
-    
+
     lector.onload = async (evento) => {
       const texto = evento.target.result;
       const lineas = texto.split(/\r\n|\n/);
-      
+
       let inicioDatos = -1;
+      let tipoArchivo = null; // Detecta solo si es 'PEDIDOS' o 'PRODUCTOS'
       let indicesCols = {};
 
-      for (let i = 0; i < Math.min(10, lineas.length); i++) {
-        const linea = lineas[i];
-        if (linea.includes('Número') || linea.includes('Nºmero') || linea.includes('Numero') || linea.includes('Fecha pedido')) {
-          const headers = linea.split(';');
-          headers.forEach((h, idx) => {
-            const cleanH = h.replace(/"/g, '').trim().toLowerCase();
-            if (cleanH.includes('número') || cleanH.includes('numero')) indicesCols.numero = idx;
-            if (cleanH.includes('fecha pedido')) indicesCols.fecha_pedido = idx;
-            if (cleanH.includes('fecha entrega')) indicesCols.fecha_entrega = idx;
-            if (cleanH.includes('cliente') && !cleanH.includes('cod')) indicesCols.cliente = idx;
-            if (cleanH.includes('rubro')) indicesCols.rubro = idx;
-            if (cleanH.includes('código producto') || cleanH.includes('codigo producto') || cleanH.includes('corrugado')) indicesCols.codigo_producto = idx;
-            if (cleanH.includes('descripción') || cleanH.includes('descripcion')) indicesCols.descripcion = idx;
+      // Limpiador universal que ignora tildes, signos raros y mayúsculas
+      const normalizar = (str) =>
+        String(str || '')
+          .replace(/"/g, '')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .trim();
+
+      for (let i = 0; i < Math.min(15, lineas.length); i++) {
+        if (!lineas[i].trim()) continue;
+        const cols = lineas[i].split(';');
+        if (cols.length < 4) continue;
+
+        const lineaNorm = normalizar(lineas[i]);
+
+        // 1. ¿Es el archivo de PEDIDOS?
+        if (lineaNorm.includes('fecha pedido') || lineaNorm.includes('fecha entrega') || lineaNorm.includes('m2 pend')) {
+          tipoArchivo = 'PEDIDOS';
+          cols.forEach((h, idx) => {
+            const cleanH = normalizar(h);
+            if (idx === 0 || cleanH.includes('numero') || cleanH === 'nro') indicesCols.numero = idx;
+            if (cleanH === 'fecha pedido') indicesCols.fecha_pedido = idx;
+            if (cleanH === 'fecha entrega') indicesCols.fecha_entrega = idx;
+            if (cleanH === 'cliente') indicesCols.cliente = idx;
+            if (cleanH === 'rubro') indicesCols.rubro = idx;
+            if (cleanH.includes('producto') && (cleanH.includes('cod') || idx === 10)) indicesCols.codigo_producto = idx;
+            if (cleanH.startsWith('descripci')) indicesCols.descripcion = idx;
+            if (cleanH === 'largo') indicesCols.largo = idx;
+            if (cleanH === 'ancho') indicesCols.ancho = idx;
+            if (cleanH === 'plancha') indicesCols.plancha = idx;
+            if (cleanH === 'cant.' || cleanH === 'cantidad') indicesCols.cantidad = idx;
+            if (cleanH.includes('tot') && cleanH.startsWith('m')) indicesCols.m2_tot = idx;
+            if (cleanH.includes('pend') && cleanH.startsWith('m')) indicesCols.m2_pend = idx;
+            if (cleanH === 'peso') indicesCols.peso = idx;
+            if (cleanH === 'ruta') indicesCols.ruta = idx;
+          });
+          inicioDatos = i + 1;
+          break;
+        }
+
+        // 2. ¿Es el archivo de PRODUCTOS?
+        if (lineaNorm.includes('codigo') || lineaNorm.includes('cliente') || lineaNorm.includes('descripci') || lineaNorm.includes('largo')) {
+          tipoArchivo = 'PRODUCTOS';
+          cols.forEach((h, idx) => {
+            const cleanH = normalizar(h);
+            if (cleanH.includes('cod') || idx === 0) indicesCols.codigo_producto = idx;
+            if (cleanH.includes('cliente')) indicesCols.cliente = idx;
+            if (cleanH.startsWith('descripci')) indicesCols.descripcion = idx;
             if (cleanH.includes('largo')) indicesCols.largo = idx;
-            if (cleanH.includes('ancho')) indicesCols.ancho = idx;
-            if (cleanH.includes('plancha')) indicesCols.plancha = idx;
-            if (cleanH.includes('cant.')) indicesCols.cantidad = idx;
-            if (cleanH.includes('m² tot.')) indicesCols.m2_tot = idx;
-            if (cleanH.includes('m² pend.')) indicesCols.m2_pend = idx;
-            if (cleanH.includes('peso')) indicesCols.peso = idx;
-            if (cleanH === 'ruta' || cleanH.startsWith('ruta')) indicesCols.ruta = idx;
+            if (cleanH.includes('ancho') && !cleanH.includes('pref')) indicesCols.ancho = idx;
+            if (cleanH.includes('ruta')) indicesCols.ruta = idx;
           });
           inicioDatos = i + 1;
           break;
@@ -128,38 +170,89 @@ export default function PantallaProgramador() {
       }
 
       if (inicioDatos === -1) {
-        alert("❌ No se reconoció la cabecera del Maestro_pedidos.csv.");
+        alert('❌ No se encontró una cabecera válida en el archivo CSV.');
         return;
       }
 
-      const payloadBackend = [];
+      const limpiarNum = (val) => {
+        if (!val) return null;
+        const n = parseFloat(String(val).replace(/"/g, '').replace(/\./g, '').replace(',', '.').trim());
+        return isNaN(n) ? null : n;
+      };
 
+      // ==========================================
+      // FLUJO A: SI SUBISTE MAESTRO DE PRODUCTOS
+      // ==========================================
+      if (tipoArchivo === 'PRODUCTOS') {
+        const payloadProductos = [];
+        for (let i = inicioDatos; i < lineas.length; i++) {
+          if (!lineas[i].trim()) continue;
+          const cols = lineas[i].split(';');
+          const codProd = cols[indicesCols.codigo_producto ?? 0]?.replace(/"/g, '').trim();
+          if (!codProd) continue;
+
+          payloadProductos.push({
+            codigo_producto: codProd,
+            cliente: cols[indicesCols.cliente]?.replace(/"/g, '').trim() || null,
+            descripcion: cols[indicesCols.descripcion]?.replace(/"/g, '').trim() || null,
+            largo_mm: limpiarNum(cols[indicesCols.largo]),
+            ancho_mm: limpiarNum(cols[indicesCols.ancho]),
+            ruta_sugerida: cols[indicesCols.ruta ?? cols.length - 1]?.replace(/"/g, '').trim() || 'COR-JS'
+          });
+        }
+
+        try {
+          const respuesta = await apiFetch('/api/productos/sincronizar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productos: payloadProductos }),
+          });
+          const resultado = await respuesta.json();
+          if (respuesta.ok) {
+            alert(`✅ [Base de PRODUCTOS]\n${resultado.mensaje}`);
+          } else {
+            alert(`❌ Error en BD Productos: ${resultado.error}`);
+          }
+        } catch (error) {
+          alert('❌ Error de conexión al subir Productos.');
+        }
+        return;
+      }
+
+      // ==========================================
+      // FLUJO B: SI SUBISTE MAESTRO DE PEDIDOS
+      // ==========================================
+      const payloadPedidos = [];
       for (let i = inicioDatos; i < lineas.length; i++) {
         if (!lineas[i].trim()) continue;
-        
         const cols = lineas[i].split(';');
-        
-        const numOrden = parseInt(cols[indicesCols.numero !== undefined ? indicesCols.numero : 0]?.replace(/"/g, '').trim(), 10);
-        const codProd = cols[indicesCols.codigo_producto !== undefined ? indicesCols.codigo_producto : 10]?.replace(/"/g, '').trim();
-        const cantStr = cols[indicesCols.cantidad !== undefined ? indicesCols.cantidad : 20]?.replace(/\./g, '').replace(',', '.') || "0";
-        const rutaVal = cols[indicesCols.ruta !== undefined ? indicesCols.ruta : cols.length - 1]?.replace(/"/g, '').trim() || '';
 
-        if (numOrden && !isNaN(numOrden)) {
-          payloadBackend.push({
+        // Quitamos puntos de miles antes del parseInt para que "48.273" sea 48273 y no 48
+        const rawOrden = String(cols[0] || '').replace(/"/g, '').replace(/\./g, '').trim();
+        const numOrden = parseInt(rawOrden, 10);
+
+        if (!numOrden || isNaN(numOrden) || numOrden <= 0 || numOrden > 999999) continue;
+
+        const codProd = cols[indicesCols.codigo_producto ?? 10]?.replace(/"/g, '').trim();
+        const cantProg = limpiarNum(cols[indicesCols.cantidad ?? 20]) || 0;
+        const rutaVal = cols[indicesCols.ruta ?? 39]?.replace(/"/g, '').trim() || '';
+
+        if (cantProg > 0) {
+          payloadPedidos.push({
             numero_orden: numOrden,
             codigo_producto: codProd || 'SIN_CODIGO',
-            cantidad_programada: parseFloat(cantStr) || 0,
-            fecha_entrega: cols[indicesCols.fecha_entrega]?.replace(/"/g, '').trim() || null,
-            fecha_pedido: cols[indicesCols.fecha_pedido]?.replace(/"/g, '').trim() || null,
-            cliente: cols[indicesCols.cliente]?.replace(/"/g, '').trim() || null,
-            rubro: cols[indicesCols.rubro]?.replace(/"/g, '').trim() || null,
-            descripcion: cols[indicesCols.descripcion]?.replace(/"/g, '').trim() || null,
-            largo: parseFloat(cols[indicesCols.largo]?.replace(/\./g, '').replace(',', '.')) || null,
-            ancho: parseFloat(cols[indicesCols.ancho]?.replace(/\./g, '').replace(',', '.')) || null,
-            plancha: cols[indicesCols.plancha]?.replace(/"/g, '').trim() || null,
-            m2_tot: parseFloat(cols[indicesCols.m2_tot]?.replace(/\./g, '').replace(',', '.')) || null,
-            m2_pend: parseFloat(cols[indicesCols.m2_pend]?.replace(/\./g, '').replace(',', '.')) || null,
-            peso: parseFloat(cols[indicesCols.peso]?.replace(/\./g, '').replace(',', '.')) || null,
+            cantidad_programada: cantProg,
+            fecha_pedido: cols[indicesCols.fecha_pedido ?? 1]?.replace(/"/g, '').trim() || null,
+            fecha_entrega: cols[indicesCols.fecha_entrega ?? 2]?.replace(/"/g, '').trim() || null,
+            cliente: cols[indicesCols.cliente ?? 5]?.replace(/"/g, '').trim() || null,
+            rubro: cols[indicesCols.rubro ?? 6]?.replace(/"/g, '').trim() || null,
+            descripcion: cols[indicesCols.descripcion ?? 13]?.replace(/"/g, '').trim() || null,
+            largo: limpiarNum(cols[indicesCols.largo ?? 17]),
+            ancho: limpiarNum(cols[indicesCols.ancho ?? 18]),
+            plancha: cols[indicesCols.plancha ?? 19]?.replace(/"/g, '').trim() || null,
+            m2_tot: limpiarNum(cols[indicesCols.m2_tot ?? 21]),
+            m2_pend: limpiarNum(cols[indicesCols.m2_pend ?? 22]),
+            peso: limpiarNum(cols[indicesCols.peso ?? 26]),
             maquina_asignada: rutaVal
           });
         }
@@ -169,22 +262,23 @@ export default function PantallaProgramador() {
         const respuesta = await apiFetch('/api/pedidos/sincronizar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pedidos: payloadBackend }),
+          body: JSON.stringify({ pedidos: payloadPedidos }),
         });
 
         const resultado = await respuesta.json();
 
         if (respuesta.ok) {
           alert(`✅ [Base de PEDIDOS]\n${resultado.mensaje}`);
-          cargarPedidosDesdeBD(); 
+          cargarPedidosDesdeBD();
         } else {
-          alert(`❌ Error en BD: ${resultado.error}`);
+          alert(`❌ Error en BD Pedidos: ${resultado.error}`);
         }
       } catch (error) {
         alert('❌ Error crítico de conexión con el servidor.');
       }
     };
 
+    // ISO-8859-1 lee perfectamente los archivos de Procusto sin romper las tildes
     lector.readAsText(archivo, 'ISO-8859-1');
   };
 
@@ -254,7 +348,7 @@ export default function PantallaProgramador() {
 
   const pedidosFiltrados = pedidos.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
-    return p.maquina && p.maquina.toUpperCase().includes(filtroMaquina.toUpperCase());
+    return p.maquina && p.maquina.trim().toUpperCase() === filtroMaquina.trim().toUpperCase();
   });
 
   return (

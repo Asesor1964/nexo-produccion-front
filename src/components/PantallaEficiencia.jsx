@@ -3,17 +3,17 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, 
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend 
 } from 'recharts';
-import ReporteScrap from './ReporteScrap'; // <--- Importamos la auditoría de scrap
-import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
+import ReporteScrap from './ReporteScrap'; 
+import { apiFetch } from '../services/api'; 
 
 export default function PantallaEficiencia() {
   const [tiemposMuertos, setTiemposMuertos] = useState([]);
   const [paradaEditando, setParadaEditando] = useState(null);
   
-  // NUEVO: Pestaña activa dentro del módulo de eficiencia ('tiempos' o 'scrap')
+  // Pestaña activa dentro del módulo de eficiencia ('tiempos' o 'scrap')
   const [pestanaActiva, setPestanaActiva] = useState('tiempos');
 
-  // NUEVO: ESTADO PARA EL FILTRO MENSUAL
+  // Estado para el filtro mensual
   const [mesSeleccionado, setMesSeleccionado] = useState('TODOS');
 
   // 1. CARGAR DATOS
@@ -106,7 +106,7 @@ export default function PantallaEficiencia() {
       }
       
       const mins = Number(curr.minutos_duracion) || 0;
-      const esSetup = (curr.codigo_parada || '').toLowerCase().includes('set-up');
+      const esSetup = (curr.codigo_parada || '').toLowerCase().includes('set-up') || (curr.codigo_parada || '').includes('01-');
       
       if (esSetup) {
         acc[clave].setup += mins;

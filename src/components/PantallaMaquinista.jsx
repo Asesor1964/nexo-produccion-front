@@ -288,9 +288,17 @@ export default function PantallaMaquinista() {
       });
       if (respuesta.ok) {
         const datos = await respuesta.json();
-        const soloHabilitadas = datos.filter(p => 
-          ['habilitada', 'en produccion', 'en producción'].includes((p.estado || '').trim().toLowerCase())
-        );
+        const soloHabilitadas = datos.filter(p => {
+          const est = (p.estado || '').trim().toLowerCase();
+          return [
+            'habilitada', 
+            'en preparacion', 
+            'en preparación', 
+            'en produccion', 
+            'en producción', 
+            'pausada'
+          ].includes(est);
+        });
         setColaPedidos(soloHabilitadas);
       }
     } catch (error) { 
@@ -539,7 +547,14 @@ export default function PantallaMaquinista() {
     let minutosPerdidos = totalMinutosFin - totalMinutosInicio;
     if (minutosPerdidos < 0) minutosPerdidos = 0; 
 
-    setListaParadas([...listaParadas, { ...nuevaParada, minutos: minutosPerdidos }]);
+    // 👉 Agregamos el operador actual (reemplaza 'operadorActual' por la variable o estado real que uses para el operador seleccionado)
+    const paradaConOperador = {
+      ...nuevaParada,
+      minutos: minutosPerdidos,
+      operador: operadorActual || 'Sin Operador' 
+    };
+
+    setListaParadas([...listaParadas, paradaConOperador]);
     setMostrarModalParada(false); 
     notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq);
   };
