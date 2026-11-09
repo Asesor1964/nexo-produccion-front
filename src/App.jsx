@@ -7,6 +7,7 @@ import PantallaEficiencia from './components/PantallaEficiencia';
 import PantallaConfiguracion from './components/PantallaConfiguracion';
 import PantallaMonitorTV from './components/PantallaMonitorTV';
 import PantallaDesarrollador from './components/PantallaDesarrollador';
+import PantallaExpedicion from './components/PantallaExpedicion'; // 👈 1. IMPORTACIÓN AGREGADA
 
 export default function App() {
   const [usuarioActual, setUsuarioActual] = useState(null);
@@ -46,6 +47,8 @@ export default function App() {
         setRolActivo('desarrollador');
       } else if (rolUser === 'monitor') {
         setRolActivo('monitor');
+      } else if (rolUser === 'expedicion') {
+        setRolActivo('expedicion'); // 👈 Redirección directa si es de expedición
       }
     }} />;
   }
@@ -59,10 +62,13 @@ export default function App() {
       return true;
     }
     if (rolUsuarioNormalizado.includes('programador')) {
-      return ['programador', 'jefe', 'configuracion', 'monitor', 'maquinista'].includes(modulo);
+      return ['programador', 'jefe', 'configuracion', 'monitor', 'maquinista', 'expedicion'].includes(modulo);
     }
     if (rolUsuarioNormalizado.includes('jefe')) {
-      return ['jefe', 'eficiencia', 'programador', 'maquinista', 'configuracion', 'monitor'].includes(modulo);
+      return ['jefe', 'eficiencia', 'programador', 'maquinista', 'configuracion', 'monitor', 'expedicion'].includes(modulo);
+    }
+    if (rolUsuarioNormalizado.includes('expedicion')) {
+      return ['expedicion', 'monitor'].includes(modulo); // 👈 Permisos específicos de expedición
     }
     if (rolUsuarioNormalizado.includes('eficiencia')) {
       return ['eficiencia', 'jefe', 'monitor'].includes(modulo);
@@ -116,6 +122,14 @@ export default function App() {
               onClick={() => setRolActivo('jefe')}
               style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#ffc107', color: 'black', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
               📊 Jefe de Producción
+            </button>
+          )}
+
+          {tienePermiso('expedicion') && (
+            <button 
+              onClick={() => setRolActivo('expedicion')}
+              style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
+              🚚 Expedición y Logística
             </button>
           )}
 
@@ -189,6 +203,7 @@ export default function App() {
         {rolActivo === 'desarrollador' && <PantallaDesarrollador />}
         {rolActivo === 'configuracion' && <PantallaConfiguracion />}
         {rolActivo === 'monitor' && <PantallaMonitorTV />}
+        {rolActivo === 'expedicion' && <PantallaExpedicion />} {/* 👈 Renderizado de la nueva pantalla */}
       </div>
 
     </div>

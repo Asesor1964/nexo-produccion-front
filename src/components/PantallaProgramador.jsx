@@ -87,16 +87,6 @@ export default function PantallaProgramador() {
     )
   ).sort();
 
-  const limpiarHeader = (texto) => {
-    return String(texto || '')
-      .replace(/^\uFEFF/, '') // Quita el BOM de UTF-8
-      .replace(/"/g, '')      // Quita comillas dobles
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // Quita tildes
-      .trim();
-  };
-
   const procesarCSV = (e) => {
     e.preventDefault();
     if (!archivo) return;
@@ -108,10 +98,9 @@ export default function PantallaProgramador() {
       const lineas = texto.split(/\r\n|\n/);
 
       let inicioDatos = -1;
-      let tipoArchivo = null; // Detecta solo si es 'PEDIDOS' o 'PRODUCTOS'
+      let tipoArchivo = null;
       let indicesCols = {};
 
-      // Limpiador universal que ignora tildes, signos raros y mayúsculas
       const normalizar = (str) =>
         String(str || '')
           .replace(/"/g, '')
@@ -127,7 +116,6 @@ export default function PantallaProgramador() {
 
         const lineaNorm = normalizar(lineas[i]);
 
-        // 1. ¿Es el archivo de PEDIDOS?
         if (lineaNorm.includes('fecha pedido') || lineaNorm.includes('fecha entrega') || lineaNorm.includes('m2 pend')) {
           tipoArchivo = 'PEDIDOS';
           cols.forEach((h, idx) => {
@@ -152,7 +140,6 @@ export default function PantallaProgramador() {
           break;
         }
 
-        // 2. ¿Es el archivo de PRODUCTOS?
         if (lineaNorm.includes('codigo') || lineaNorm.includes('cliente') || lineaNorm.includes('descripci') || lineaNorm.includes('largo')) {
           tipoArchivo = 'PRODUCTOS';
           cols.forEach((h, idx) => {
@@ -180,9 +167,6 @@ export default function PantallaProgramador() {
         return isNaN(n) ? null : n;
       };
 
-      // ==========================================
-      // FLUJO A: SI SUBISTE MAESTRO DE PRODUCTOS
-      // ==========================================
       if (tipoArchivo === 'PRODUCTOS') {
         const payloadProductos = [];
         for (let i = inicioDatos; i < lineas.length; i++) {
@@ -219,15 +203,11 @@ export default function PantallaProgramador() {
         return;
       }
 
-      // ==========================================
-      // FLUJO B: SI SUBISTE MAESTRO DE PEDIDOS
-      // ==========================================
       const payloadPedidos = [];
       for (let i = inicioDatos; i < lineas.length; i++) {
         if (!lineas[i].trim()) continue;
         const cols = lineas[i].split(';');
 
-        // Quitamos puntos de miles antes del parseInt para que "48.273" sea 48273 y no 48
         const rawOrden = String(cols[0] || '').replace(/"/g, '').replace(/\./g, '').trim();
         const numOrden = parseInt(rawOrden, 10);
 
@@ -278,7 +258,6 @@ export default function PantallaProgramador() {
       }
     };
 
-    // ISO-8859-1 lee perfectamente los archivos de Procusto sin romper las tildes
     lector.readAsText(archivo, 'ISO-8859-1');
   };
 
@@ -321,16 +300,27 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros activos)
   const handleDragEnd = async (resultado) => {
     if (!resultado.destination) return;
 
-    const items = Array.from(pedidos);
-    const [filaArrastrada] = items.splice(resultado.source.index, 1);
-    items.splice(resultado.destination.index, 0, filaArrastrada);
+    const sourceIndex = resultado.source.index;
+    const destIndex = resultado.destination.index;
 
-    setPedidos(items);
+    if (sourceIndex === destIndex) return;
 
-    const payload = items.map((item, index) => ({
+    // Si hay un filtro aplicado, operamos sobre la sublista y luego fusionamos con el resto
+    const itemsFiltrados = Array.from(pedidosFiltrados);
+    const [movido] = itemsFiltrados.splice(sourceIndex, 1);
+    itemsFiltrados.splice(destIndex, 0, movido);
+
+    const idsFiltradosSet = new Set(pedidosFiltrados.map(p => p.id));
+    const restoPedidos = pedidos.filter(p => !idsFiltradosSet.has(p.id));
+    
+    const nuevaListaGlobal = [...itemsFiltrados, ...restoPedidos];
+    setPedidos(nuevaListaGlobal);
+
+    const payload = nuevaListaGlobal.map((item, index) => ({
       id: item.id,
       prioridad: index + 1
     }));
@@ -343,6 +333,29 @@ export default function PantallaProgramador() {
       });
     } catch (error) {
       console.error("Error al guardar el nuevo orden en BD", error);
+    }
+  };
+
+  // ⚡ ATAJO RÁPIDO PARA MANDAR CUALQUIER ORDEN AL PUESTO 1 AL INSTANTE
+  const forzarAlPrimerPuesto = async (pedidoSeleccionado) => {
+    const resto = pedidos.filter(p => p.id !== pedidoSeleccionado.id);
+    const nuevaLista = [pedidoSeleccionado, ...resto];
+    
+    setPedidos(nuevaLista);
+
+    const payload = nuevaLista.map((item, index) => ({
+      id: item.id,
+      prioridad: index + 1
+    }));
+
+    try {
+      await apiFetch('/api/pedidos/reordenar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nuevoOrden: payload })
+      });
+    } catch (error) {
+      console.error("Error al forzar prioridad", error);
     }
   };
 
@@ -458,6 +471,15 @@ export default function PantallaProgramador() {
                               <td style={{ padding: '15px 10px', fontWeight: 'bold' }}>
                                 <span style={{ cursor: 'grab', marginRight: '10px', color: '#aaa' }}>☰</span>
                                 {pedido.id}
+                                {/* Botón rápido de emergencia para mandar al puesto 1 con 1 clic */}
+                                {index !== 0 && (
+                                  <button 
+                                    onClick={() => forzarAlPrimerPuesto(pedido)}
+                                    style={{ marginLeft: '10px', padding: '2px 6px', fontSize: '0.65rem', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                    title="Mandar al primer puesto de la cola">
+                                    ⬆️ Puesto 1
+                                  </button>
+                                )}
                               </td>
                               <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
                               <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
@@ -481,7 +503,6 @@ export default function PantallaProgramador() {
                                 </select>
                               </td>
                               
-                              {/* 1. CELDA DE ESTADO CON SOPORTE PARA FINALIZADA PARCIAL Y BOTONES DE DECISIÓN */}
                               <td style={{ padding: '15px 10px', textAlign: 'center' }}>
                                 <span style={{ 
                                   padding: '6px 12px', borderRadius: '20px', 
@@ -492,7 +513,6 @@ export default function PantallaProgramador() {
                                   {pedido.estado}
                                 </span>
 
-                                {/* ⚠️ ETIQUETA ROJA DE FALTANTE CON BOTONES DE ACCIÓN RÁPIDA */}
                                 {pedido.estado === 'Finalizada Parcial' && (
                                   <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
                                     <span style={{ 
@@ -527,7 +547,6 @@ export default function PantallaProgramador() {
                                 )}
                               </td>
                               
-                              {/* 2. CELDA DE ACCIÓN */}
                               <td style={{ padding: '15px 10px', textAlign: 'center' }}>
                                 {pedido.estado === 'Pendiente' ? (
                                   <button 

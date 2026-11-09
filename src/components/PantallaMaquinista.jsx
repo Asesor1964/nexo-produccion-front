@@ -136,12 +136,21 @@ export default function PantallaMaquinista() {
   const [inicioFaseMs, setInicioFaseMs] = useState(estadoGuardado?.inicioFaseMs || null);
   const [cantidadFabricada, setCantidadFabricada] = useState(estadoGuardado?.cantidadFabricada || 0);
   
+  // 📦 Estado para la capacidad estándar del pallet (persistido en localStorage)
+  const [capacidadPalletStandard, setCapacidadPalletStandard] = useState(estadoGuardado?.capacidadPalletStandard ?? 1000);
+
   const [segundosTranscurridos, setSegundosTranscurridos] = useState(() => {
     if ((estadoGuardado?.enSetup || estadoGuardado?.produccionActiva) && estadoGuardado?.inicioFaseMs) {
       return Math.max(0, Math.floor((Date.now() - estadoGuardado.inicioFaseMs) / 1000));
     }
     return 0;
   });
+
+  // Referencia para enviar siempre los segundos en vivo sin reiniciar el intervalo de latido
+  const segundosRef = useRef(segundosTranscurridos);
+  useEffect(() => {
+    segundosRef.current = segundosTranscurridos;
+  }, [segundosTranscurridos]);
 
   const [motivoDemoraSetup, setMotivoDemoraSetup] = useState(estadoGuardado?.motivoDemoraSetup || '');
   const [mostrarModalParada, setMostrarModalParada] = useState(false);
@@ -176,6 +185,7 @@ export default function PantallaMaquinista() {
       horaInicio,
       inicioFaseMs,
       cantidadFabricada,
+      capacidadPalletStandard,
       motivoDemoraSetup,
       listaParadas,
       modoCaptura,
@@ -196,6 +206,7 @@ export default function PantallaMaquinista() {
     horaInicio,
     inicioFaseMs,
     cantidadFabricada,
+    capacidadPalletStandard,
     motivoDemoraSetup,
     listaParadas,
     modoCaptura,
@@ -216,7 +227,6 @@ export default function PantallaMaquinista() {
         const resOperadores = await apiFetch('/api/pedidos/recursos/operadores');
         if (resOperadores.ok) setListaOperadores(await resOperadores.json());
 
-        // Carga los códigos de parada directamente desde la tabla codigos_parada en PostgreSQL
         const resParadas = await apiFetch('/api/pedidos/recursos/paradas');
         if (resParadas.ok) {
           const dataParadas = await resParadas.json();
@@ -225,7 +235,6 @@ export default function PantallaMaquinista() {
               if (typeof item === 'string') return item;
               const desc = (item.descripcion || '').trim();
               const cod = (item.codigo || '').trim();
-              // Si la descripción ya comienza con el número (ej: "01- Cambio de Orden"), la usamos directo
               if (/^\d+/.test(desc)) return desc;
               return cod ? `${cod} - ${desc}` : desc;
             }).filter(Boolean);
@@ -315,7 +324,13 @@ export default function PantallaMaquinista() {
     return () => clearInterval(intervaloCola);
   }, [maquinaSeleccionada]);
 
-  const notificarEstadoEnVivo = async (estadoNuevo, velocidadVal = 0, ordenOverride = ordenActiva) => {
+  // 🛰️ FUNCIÓN CORREGIDA: Ahora recibe segundosFaseVal y lo envía en segundos_fase
+  const notificarEstadoEnVivo = async (
+    estadoNuevo,
+    velocidadVal = 0,
+    segundosFaseVal = segundosRef.current,
+    ordenOverride = ordenActiva
+  ) => {
     if (!maquinaSeleccionada) return;
     try {
       await apiFetch(`/api/pedidos/maquinas/${encodeURIComponent(maquinaSeleccionada)}/estado-vivo`, {
@@ -326,7 +341,8 @@ export default function PantallaMaquinista() {
           orden: ordenOverride?.numero_orden || '',
           operador: operadorSeleccionado,
           cajas: Number(cantidadFabricada) || 0,
-          velocidad: velocidadVal
+          velocidad: Number(velocidadVal) || 0,
+          segundos_fase: Number(segundosFaseVal) || 0 // 👈 ¡Ahora sí viaja al backend!
         })
       });
     } catch (err) {
@@ -334,32 +350,50 @@ export default function PantallaMaquinista() {
     }
   };
 
+  // 🛰️ LATIDO BLINDADO: Sincroniza el estado y los segundos en vivo cada 2 segundos con el Monitor TV
   useEffect(() => {
     if (!maquinaSeleccionada) return;
 
-    let estadoActual = 'ESPERA';
-    let velActual = 0;
+    const enviarLatido = () => {
+      let estadoActual = 'ESPERA';
+      let velActual = 0;
+      
+      // Calculamos al vuelo desde inicioFaseMs para máxima exactitud
+      const segsReales = (enSetup || produccionActiva) && inicioFaseMs
+        ? Math.max(0, Math.floor((Date.now() - inicioFaseMs) / 1000))
+        : segundosRef.current;
 
-    if (mostrarModalParada) {
-      estadoActual = 'PARADA';
-      velActual = 0;
-    } else if (enSetup) {
-      estadoActual = 'SETUP';
-      velActual = 0;
-    } else if (produccionActiva) {
-      estadoActual = 'PRODUCIENDO';
-      velActual = Number(velocidadOperativa) || 0;
-    }
+      if (mostrarModalParada) {
+        estadoActual = 'PARADA';
+        velActual = 0;
+      } else if (enSetup) {
+        estadoActual = 'SETUP';
+        velActual = 0;
+      } else if (produccionActiva) {
+        estadoActual = 'PRODUCIENDO';
+        velActual = Number(velocidadOperativa) || 0;
+      }
 
-    notificarEstadoEnVivo(estadoActual, velActual);
+      notificarEstadoEnVivo(estadoActual, velActual, segsReales, ordenActiva);
+    };
 
-    const latido = setInterval(() => {
-      notificarEstadoEnVivo(estadoActual, velActual);
-    }, 2000);
+    enviarLatido(); // Envía de inmediato al montar/cambiar de fase
+    const latido = setInterval(enviarLatido, 2000);
 
     return () => clearInterval(latido);
-  }, [maquinaSeleccionada, operadorSeleccionado, enSetup, produccionActiva, mostrarModalParada, cantidadFabricada, ordenActiva, velocidadOperativa]);
+  }, [
+    maquinaSeleccionada,
+    operadorSeleccionado,
+    enSetup,
+    produccionActiva,
+    mostrarModalParada,
+    cantidadFabricada,
+    ordenActiva,
+    velocidadOperativa,
+    inicioFaseMs
+  ]);
 
+  // ⏱️ CRONÓMETRO DE FASE (Alta precisión basada en milisegundos reales)
   useEffect(() => {
     let intervalo = null;
     if ((enSetup || produccionActiva) && inicioFaseMs) {
@@ -388,9 +422,11 @@ export default function PantallaMaquinista() {
     const VELOCIDAD_ESTANDAR = Number(velocidadEstandarMaq) || 120; 
     tiempoObjetivoMinutos = Math.ceil(ordenActiva.cantidad_programada / VELOCIDAD_ESTANDAR);
     const minutosBrutos = Math.floor(segundosTranscurridos / 60);
+    
+    // Sumamos solo las paradas registradas que ocurrieron en la fase de producción actual
     const totalMinutosParadosEnProduccion = listaParadas
-      .filter(p => !p.codigo.includes('Set-Up'))
-      .reduce((acc, parada) => acc + parada.minutos, 0);
+      .filter(p => !String(p.codigo || '').toLowerCase().includes('set-up'))
+      .reduce((acc, parada) => acc + (Number(parada.minutos) || 0), 0);
     
     let minutosNetos = minutosBrutos - totalMinutosParadosEnProduccion;
     if (minutosNetos < 0) minutosNetos = 0; 
@@ -452,7 +488,7 @@ export default function PantallaMaquinista() {
     setMotivoDemoraSetup('');
     setCantidadFabricada(0);
     limpiarBorradorCIP();
-    notificarEstadoEnVivo('ESPERA', 0, null);
+    notificarEstadoEnVivo('ESPERA', 0, 0, null);
   };
 
   const iniciarSetup = () => {
@@ -461,10 +497,10 @@ export default function PantallaMaquinista() {
     setInicioFaseMs(Date.now());
     setSegundosTranscurridos(0);
     setEnSetup(true); 
-    notificarEstadoEnVivo('SETUP', 0);
+    notificarEstadoEnVivo('SETUP', 0, 0);
   };
 
-  const finalizarSetup = () => {
+  const finalizarSetup = async () => {
     let minutosSetup = Math.floor(segundosTranscurridos / 60);
     
     if (minutosSetup > TIEMPO_IDEAL_SETUP && !motivoDemoraSetup) {
@@ -480,11 +516,33 @@ export default function PantallaMaquinista() {
       ? `00 - Set-Up (Atraso: ${motivoDemoraSetup})` 
       : '00 - Set-Up Inicial';
 
+    let guardadaOk = false;
+    try {
+      const res = await apiFetch('/api/pedidos/tiempos-muertos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maquina: maquinaSeleccionada,
+          codigo_parada: codigoFinalSetup,
+          motivo: codigoFinalSetup,
+          minutos_duracion: minutosSetup,
+          numero_orden: ordenActiva?.numero_orden,
+          operador: operadorSeleccionado || 'Sin Operador'
+        })
+      });
+      guardadaOk = res.ok;
+    } catch (err) {
+      console.error('Error al guardar Set-Up en vivo:', err);
+    }
+
     const paradaSetup = {
       horaInicioParada: horaInicio,
       horaFinParada: horaFinSetup,
       codigo: codigoFinalSetup,
-      minutos: minutosSetup
+      minutos: minutosSetup,
+      minutos_duracion: minutosSetup,
+      operador: operadorSeleccionado || 'Sin Operador',
+      guardadaEnBD: guardadaOk
     };
 
     setListaParadas([...listaParadas, paradaSetup]);
@@ -495,17 +553,20 @@ export default function PantallaMaquinista() {
     setEnSetup(false);
     setMotivoDemoraSetup('');
     setProduccionActiva(true); 
-    notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq);
+    notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, 0);
   };
 
   const finalizarOrdenBD = async () => {
     if (!ordenActiva) return;
+    const cantFabReal = Number(cantidadFabricada) || 0;
+    
     try {
+      // 1. Finalizar la orden en producción
       const respuesta = await apiFetch(`/api/pedidos/${ordenActiva.numero_orden}/produccion`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          cantidad_fabricada: Number(cantidadFabricada) || 0, 
+          cantidad_fabricada: cantFabReal, 
           estado: 'Finalizada',
           paradas: listaParadas,
           maquina: maquinaSeleccionada,
@@ -514,7 +575,24 @@ export default function PantallaMaquinista() {
       });
 
       if (respuesta.ok) {
-        alert(`✅ Orden ${ordenActiva.numero_orden} Finalizada.\n👤 Operador: ${operadorSeleccionado}\n📦 Cajas: ${cantidadFabricada}\n⏱️ Producción Pura: ${formatearTiempo(segundosTranscurridos)}`);
+        // 2. Disparar automáticamente la creación del pallet en Expedición/Galpón
+        if (cantFabReal > 0) {
+          await apiFetch('/api/expedicion/pallets', { // 👈 RUTA CORREGIDA A /api/expedicion/pallets
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              numero_orden: ordenActiva.numero_orden,
+              maquina: maquinaSeleccionada,
+              operador: operadorSeleccionado,
+              cliente: ordenActiva.cliente,
+              producto_descripcion: ordenActiva.producto_descripcion,
+              cantidad_unidades: cantFabReal,
+              capacidad_standard: capPalletSegura
+            })
+          }).catch(err => console.error("Error al registrar pallet automático al finalizar:", err));
+        }
+
+        alert(`✅ Orden ${ordenActiva.numero_orden} Finalizada y enviada a Expedición.\n👤 Operador: ${operadorSeleccionado}\n📦 Cajas: ${cantFabReal}\n⏱️ Producción Pura: ${formatearTiempo(segundosTranscurridos)}`);
         localStorage.removeItem(STORAGE_KEY);
         cancelarOrden();
         cargarColaDeTrabajo(maquinaSeleccionada);
@@ -534,11 +612,16 @@ export default function PantallaMaquinista() {
     const minutos = String(ahora.getMinutes()).padStart(2, '0');
     setNuevaParada({ horaInicioParada: `${horas}:${minutos}`, horaFinParada: '', codigo: '' });
     setMostrarModalParada(true);
-    notificarEstadoEnVivo('PARADA', 0);
+    notificarEstadoEnVivo('PARADA', 0, segundosRef.current);
   };
 
-  const guardarParada = (e) => {
+  const guardarParada = async (e) => {
     e.preventDefault();
+    if (!nuevaParada.horaInicioParada || !nuevaParada.horaFinParada || !nuevaParada.codigo) {
+      alert('Por favor, complete la hora de inicio, hora de fin y el código de parada.');
+      return;
+    }
+
     const [hInicio, mInicio] = nuevaParada.horaInicioParada.split(':').map(Number);
     const [hFin, mFin] = nuevaParada.horaFinParada.split(':').map(Number);
     
@@ -547,17 +630,40 @@ export default function PantallaMaquinista() {
     let minutosPerdidos = totalMinutosFin - totalMinutosInicio;
     if (minutosPerdidos < 0) minutosPerdidos = 0; 
 
-    // 👉 Agregamos el operador actual (reemplaza 'operadorActual' por la variable o estado real que uses para el operador seleccionado)
+    let guardadaOk = false;
+    try {
+      const res = await apiFetch('/api/pedidos/tiempos-muertos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maquina: maquinaSeleccionada,
+          codigo_parada: nuevaParada.codigo,
+          motivo: nuevaParada.codigo,
+          minutos_duracion: minutosPerdidos,
+          numero_orden: ordenActiva?.numero_orden,
+          operador: operadorSeleccionado || 'Sin Operador'
+        })
+      });
+      guardadaOk = res.ok;
+    } catch (err) {
+      console.error('Error al guardar parada en vivo:', err);
+    }
+
     const paradaConOperador = {
       ...nuevaParada,
       minutos: minutosPerdidos,
-      operador: operadorActual || 'Sin Operador' 
+      minutos_duracion: minutosPerdidos,
+      operador: operadorSeleccionado || 'Sin Operador',
+      guardadaEnBD: guardadaOk
     };
 
     setListaParadas([...listaParadas, paradaConOperador]);
     setMostrarModalParada(false); 
-    notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq);
+    notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, segundosRef.current);
   };
+
+  // Divisor seguro para el cálculo de pallets (evita división por cero si el input está vacío)
+  const capPalletSegura = Math.max(1, Number(capacidadPalletStandard) || 1);
 
   return (
     <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'sans-serif', width: '100%', maxWidth: '1000px', margin: '0 auto' }}>
@@ -642,7 +748,7 @@ export default function PantallaMaquinista() {
             <button onClick={cancelarOrden} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>VOLVER A LA COLA</button>
             <button onClick={iniciarSetup} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>▶ COMENZAR SET-UP (Preparación)</button>
           </div>
-        </div>          
+        </div>         
       )}
 
       {enSetup && ordenActiva && (
@@ -734,6 +840,37 @@ export default function PantallaMaquinista() {
           <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '8px', textAlign: 'left', marginBottom: '2rem', borderLeft: '5px solid #0056b3' }}>
             <p style={{ margin: '0 0 10px 0', fontSize: '1.5rem' }}><strong>Orden {ordenActiva.numero_orden}</strong> | {ordenActiva.cliente}</p>
             <p style={{ margin: 0, fontSize: '1.2rem' }}>{ordenActiva.producto_descripcion}</p>
+          </div>
+
+          {/* --- SECCIÓN DE CONTROL DE PALLETS PARA EXPEDICIÓN (CÁLCULO VISUAL EN VIVO) --- */}
+          <div style={{ backgroundColor: '#ffffff', border: '2px dashed #0d6efd', padding: '15px', borderRadius: '10px', marginBottom: '2rem', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+            <h4 style={{ margin: '0 0 12px 0', color: '#0d6efd', fontSize: '1.2rem' }}>📦 Control de Pallets para Expedición</h4>
+            
+            <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ fontSize: '0.95rem', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>Capacidad Estándar del Pallet (Unidades):</label>
+                <input 
+                  type="number"
+                  min="1"
+                  max="10000"
+                  value={capacidadPalletStandard} 
+                  onChange={(e) => setCapacidadPalletStandard(e.target.value)}
+                  placeholder="Ej: 300, 600, 1000..."
+                  style={{ padding: '8px', fontSize: '1.2rem', borderRadius: '5px', border: '2px solid #0d6efd', width: '180px', textAlign: 'center', fontWeight: 'bold' }}
+                />
+              </div>
+
+              <div style={{ flex: 1, backgroundColor: '#e7f5ff', padding: '12px', borderRadius: '8px', fontSize: '1.05rem', border: '1px solid #74c0fc' }}>
+                📊 <strong>Cálculo Automático (Se registrará al finalizar la orden):</strong> {' '}
+                <span style={{ color: '#0b5ed7', fontWeight: 'bold' }}>
+                  {Math.floor((Number(cantidadFabricada) || 0) / capPalletSegura)} pallets completos
+                </span>{' '}
+                de {capPalletSegura} u. y un{' '}
+                <span style={{ color: '#b02a37', fontWeight: 'bold' }}>
+                  {((Number(cantidadFabricada) || 0) % capPalletSegura) > 0 ? `pallet parcial de ${(Number(cantidadFabricada) || 0) % capPalletSegura} unidades` : 'sin remanente parcial'}.
+                </span>
+              </div>
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>

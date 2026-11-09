@@ -129,6 +129,19 @@ export default function PantallaMonitorTV() {
             const estadoRecibido = dataVivo.estado || 'ESPERA';
             setEstadoMaquina(estadoRecibido);
             
+            // 🎯 BLINDAJE DE CRONÓMETRO EN VIVO: Sincronizamos los segundos exactos desde la tablet
+            const segundosRealesFase = Number(dataVivo.segundos_fase) || 0;
+            if (estadoRecibido === 'SETUP') {
+              setSegundosSetupVivo(segundosRealesFase);
+              setSegundosFallaVivo(0);
+            } else if (estadoRecibido === 'PARADA') {
+              setSegundosFallaVivo(segundosRealesFase);
+              setSegundosSetupVivo(0);
+            } else {
+              setSegundosSetupVivo(0);
+              setSegundosFallaVivo(0);
+            }
+
             // 🛡️ BLINDAJE: Si la máquina está en ESPERA o en SETUP, las cajas del pedido actual DEBEN ser 0
             if (['ESPERA', 'SETUP'].includes(estadoRecibido)) {
               setCajasPedidoActual(0);
@@ -213,7 +226,7 @@ export default function PantallaMonitorTV() {
     ? (ordenEnCurso.m2_tot / cantProgramada)
     : ((ordenEnCurso.largo_lamina_mm * ordenEnCurso.ancho_lamina_mm) / 1000000);
 
-  // CRONÓMETROS TNP
+  // CRONÓMETROS TNP  
   useEffect(() => {
     let timerTNP = null;
     if (estadoMaquina === 'SETUP') {
@@ -244,12 +257,18 @@ export default function PantallaMonitorTV() {
     return esMismaMaquina && fechaReg.toDateString() === hoyStr;
   });
 
+  // 🛠️ FILTRO BLINDADO: Detecta cualquier variante de Set-Up o Cambio de Orden
+  const esSetupParada = (codigo) => {
+    const c = (codigo || '').toLowerCase();
+    return c.includes('set-up') || c.includes('setup') || c.includes('cambio de orden') || c.includes('alistamiento');
+  };
+
   const minutosSetupTurno = tnpTurnoMaquina
-    .filter(t => (t.codigo_parada || '').toLowerCase().includes('set-up'))
+    .filter(t => esSetupParada(t.codigo_parada || t.motivo))
     .reduce((acc, curr) => acc + (Number(curr.minutos_duracion) || 0), 0);
 
   const minutosFallasTurno = tnpTurnoMaquina
-    .filter(t => !(t.codigo_parada || '').toLowerCase().includes('set-up'))
+    .filter(t => !esSetupParada(t.codigo_parada || t.motivo))
     .reduce((acc, curr) => acc + (Number(curr.minutos_duracion) || 0), 0);
 
   const tnpMinutosTotalesConVivo = minutosSetupTurno + minutosFallasTurno + ((segundosSetupVivo + segundosFallaVivo) / 60);

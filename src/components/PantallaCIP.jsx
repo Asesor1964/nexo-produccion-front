@@ -1,8 +1,77 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
-export default function PantallaCIP({ ordenActiva, operador, maquina, onCerrar, datosCIP, setDatosCIP, verificacion, setVerificacion, inspeccionPaquetes, setInspeccionPaquetes }) {
+// Nómina oficial de Supervisores de Planta
+const LISTA_SUPERVISORES = [
+  "OLEA JULIO",
+  "MARTINEZ ELVIO",
+  "CRUZ WALTER",
+  "SERGIO SANCHEZ"
+];
+
+// Los 69 colores oficiales extraídos de Maestro_Productos.csv (ordenados por frecuencia en planta)
+export const CATALOGO_COLORES_MAESTRO = [
+  "SIN IMPRESION / VACIO",
+  "GCMI 90", "GCMI 75", "GCMI 10", "GCMI 39", "GCMI 25", 
+  "GCMI 29", "GCMI 24", "GCMI 81", "GCMI 394", "GCMI 2081", 
+  "GCMI 387", "GCMI 609", "GCMI 908", "GCMI 13", "MAGENTA", 
+  "GCMI 103", "PU 2746", "GCMI 31", "GCMI 52", "AMA PROC", 
+  "GCMI 91", "NEGRO PREMIUM", "GCMI 49", "GCMI 2110", "CYAN PROC", 
+  "GCMI 80", "GCMI 970", "NEG FOTOCROMO", "GCMI 21", "PU 2685", 
+  "GCMI 50", "GCMI 2014", "GCMI 9002", "CEL LED", "GCMI 984", 
+  "GCMI 388", "GCMI 76", "GCMI 73", "PU 427", "GCMI 33", 
+  "GCMI 74", "GCMI 30", "PU 7458", "GCMI 11", "PU 3945", 
+  "GCMI 900", "GCMI 40", "GCMI 3213", "COOL GRAY 2", "AZUL FOTOCROMO", 
+  "PU 315", "GCMI 978", "BARNIZ", "PU 587", "VER LIM", 
+  "GCMI 517", "GCMI 20", "VIOLETA", "CYAN", "GCMI 3086", 
+  "GCMI 918", "PU 208", "PU 7489", "PU 464", "PU 7473", 
+  "GRIS FECOVITA", "PU 376", "PU 2567", "PU 2757"
+];
+
+export default function PantallaCIP({
+  ordenActiva,
+  operador,
+  maquina,
+  onCerrar,
+  datosCIP,
+  setDatosCIP,
+  verificacion,
+  setVerificacion,
+  inspeccionPaquetes,
+  setInspeccionPaquetes
+}) {
   const [guardando, setGuardando] = useState(false);
+
+  // Autocompletar colores desde ordenActiva.colores si la planilla está en blanco
+  useEffect(() => {
+    if (!ordenActiva?.colores) return;
+    const sinTintasCargadas =
+      !datosCIP.tinta1Color &&
+      !datosCIP.tinta2Color &&
+      !datosCIP.tinta3Color &&
+      !datosCIP.tinta4Color &&
+      !datosCIP.tinta5Color &&
+      !datosCIP.tinta6Color;
+
+    if (sinTintasCargadas) {
+      const coloresReceta = String(ordenActiva.colores)
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      if (coloresReceta.length > 0) {
+        setDatosCIP((prev) => ({
+          ...prev,
+          tinta1Color: coloresReceta[0] || '',
+          tinta2Color: coloresReceta[1] || '',
+          tinta3Color: coloresReceta[2] || '',
+          tinta4Color: coloresReceta[3] || '',
+          tinta5Color: coloresReceta[4] || '',
+          tinta6Color: coloresReceta[5] || ''
+        }));
+      }
+    }
+  }, [ordenActiva, datosCIP.tinta1Color, datosCIP.tinta2Color, datosCIP.tinta3Color, datosCIP.tinta4Color, datosCIP.tinta5Color, datosCIP.tinta6Color, setDatosCIP]);
 
   const actualizarPaquete = (index, campo, valor) => {
     const nuevaMatriz = [...inspeccionPaquetes];
@@ -82,11 +151,21 @@ export default function PantallaCIP({ ordenActiva, operador, maquina, onCerrar, 
           <div><strong>OPERADOR:</strong><br/>{operador || 'No asignado'}</div>
           <div>
             <strong>SUPERVISOR:</strong><br/>
-            <input type="text" required placeholder="Nombre supervisor" value={datosCIP.supervisor} onChange={e=>setDatosCIP({...datosCIP, supervisor: e.target.value})} style={{width: '100%', padding: '5px'}} />
+            <select
+              required
+              value={datosCIP.supervisor || ''}
+              onChange={(e) => setDatosCIP({ ...datosCIP, supervisor: e.target.value })}
+              style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #495057', backgroundColor: '#fff', fontWeight: 'bold' }}
+            >
+              <option value="" disabled>-- Seleccione Supervisor --</option>
+              {LISTA_SUPERVISORES.map((sup, idx) => (
+                <option key={idx} value={sup}>{sup}</option>
+              ))}
+            </select>
           </div>
           <div>
             <strong>TURNO:</strong><br/>
-            <select value={datosCIP.turno} onChange={e=>setDatosCIP({...datosCIP, turno: e.target.value})} style={{width: '100%', padding: '5px'}}>
+            <select value={datosCIP.turno} onChange={e=>setDatosCIP({...datosCIP, turno: e.target.value})} style={{width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #495057'}}>
               <option value="M">Mañana (M)</option>
               <option value="T">Tarde (T)</option>
               <option value="N">Noche (N)</option>
@@ -98,6 +177,11 @@ export default function PantallaCIP({ ordenActiva, operador, maquina, onCerrar, 
         <div style={{ backgroundColor: '#e9ecef', padding: '12px', marginBottom: '15px', border: '1px solid #ced4da', fontSize: '0.95rem', borderRadius: '4px' }}>
           <p style={{ margin: '0 0 5px 0' }}><strong>Pedido N°:</strong> {ordenActiva?.numero_orden || 'S/N'} | <strong>Cliente:</strong> {ordenActiva?.cliente || 'Cliente General'}</p>
           <p style={{ margin: 0 }}><strong>Descripción Producto:</strong> {ordenActiva?.producto_descripcion || ordenActiva?.descripcion || 'Caja corrugada estándar'}</p>
+          {ordenActiva?.colores && (
+            <p style={{ margin: '6px 0 0 0', color: '#0056b3', fontWeight: 'bold' }}>
+              🎨 Receta Maestro de Productos: {ordenActiva.colores}
+            </p>
+          )}
         </div>
 
         <div style={{ border: '1px solid #000', marginBottom: '15px', padding: '12px' }}>
@@ -132,14 +216,38 @@ export default function PantallaCIP({ ordenActiva, operador, maquina, onCerrar, 
         <div style={{ border: '1px solid #000', marginBottom: '15px', padding: '12px' }}>
           <h4 style={{ margin: '0 0 10px 0', backgroundColor: '#343a40', color: '#fff', padding: '6px', fontSize: '1rem' }}>PROVEEDOR Y CÓDIGO DE TINTAS (6 Bloques)</h4>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', fontSize: '0.85rem' }}>
-            {[1, 2, 3, 4, 5, 6].map(num => (
-              <div key={num} style={{ border: '1px solid #ddd', padding: '8px', borderRadius: '4px', backgroundColor: '#f9f9f9' }}>
-                <label><strong>{num}° Color:</strong></label>
-                <input type="text" placeholder="Color/Tacho" value={datosCIP[`tinta${num}Color`]} onChange={e=>setDatosCIP({...datosCIP, [`tinta${num}Color`]: e.target.value})} style={{width:'100%', padding: '4px', marginBottom: '5px'}} />
-                <label><strong>Lote {num}:</strong></label>
-                <input type="text" placeholder="N° Lote" value={datosCIP[`tinta${num}Lote`]} onChange={e=>setDatosCIP({...datosCIP, [`tinta${num}Lote`]: e.target.value})} style={{width:'100%', padding: '4px'}} />
-              </div>
-            ))}
+            {[1, 2, 3, 4, 5, 6].map(num => {
+              const valorActual = datosCIP[`tinta${num}Color`] || '';
+              // Si por receta viene un color que no esté en el array base, lo incluimos dinámicamente para no perderlo
+              const opcionesColor = valorActual && !CATALOGO_COLORES_MAESTRO.includes(valorActual)
+                ? [valorActual, ...CATALOGO_COLORES_MAESTRO]
+                : CATALOGO_COLORES_MAESTRO;
+
+              return (
+                <div key={num} style={{ border: '1px solid #ddd', padding: '8px', borderRadius: '4px', backgroundColor: '#f9f9f9' }}>
+                  <label><strong>{num}° Color:</strong></label>
+                  <select
+                    value={valorActual}
+                    onChange={e => setDatosCIP({ ...datosCIP, [`tinta${num}Color`]: e.target.value })}
+                    style={{ width: '100%', padding: '6px', marginBottom: '6px', borderRadius: '4px', border: '1px solid #adb5bd', backgroundColor: '#fff', fontWeight: valorActual ? 'bold' : 'normal' }}
+                  >
+                    <option value="">-- Color / Tacho --</option>
+                    {opcionesColor.map((col, idx) => (
+                      <option key={idx} value={col}>{col}</option>
+                    ))}
+                  </select>
+
+                  <label><strong>Lote {num}:</strong></label>
+                  <input
+                    type="text"
+                    placeholder="N° Lote"
+                    value={datosCIP[`tinta${num}Lote`] || ''}
+                    onChange={e => setDatosCIP({ ...datosCIP, [`tinta${num}Lote`]: e.target.value })}
+                    style={{ width: '100%', padding: '5px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #adb5bd' }}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
 

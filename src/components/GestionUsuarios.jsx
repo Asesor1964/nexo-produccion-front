@@ -194,6 +194,7 @@ export default function GestionUsuarios() {
               <option value="jefe">📊 Jefe de Producción</option>
               <option value="eficiencia">⏱️ Analista de Eficiencia</option>
               <option value="maquinista">🏭 Supervisor / Maquinista</option>
+              <option value="expedicion">🚚 Expedición y Logística</option>
               <option value="configuracion">🛠️ Configuración (ABM)</option>
               <option value="monitor">📺 Monitor TV (Andon)</option>
             </select>
