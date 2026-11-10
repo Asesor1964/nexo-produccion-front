@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
+import { apiFetch } from '../services/api';
 
 // Nómina oficial de Supervisores de Planta
 const LISTA_SUPERVISORES = [
@@ -41,37 +41,77 @@ export default function PantallaCIP({
   setInspeccionPaquetes
 }) {
   const [guardando, setGuardando] = useState(false);
+  const [recetaTextoBD, setRecetaTextoBD] = useState(ordenActiva?.colores || '');
+  const [cargandoColores, setCargandoColores] = useState(false);
 
-  // Autocompletar colores desde ordenActiva.colores si la planilla está en blanco
+  // Autocompletar colores desde ordenActiva o consultando /api/cip/receta/:numero_orden en la BD
   useEffect(() => {
-    if (!ordenActiva?.colores) return;
-    const sinTintasCargadas =
-      !datosCIP.tinta1Color &&
-      !datosCIP.tinta2Color &&
-      !datosCIP.tinta3Color &&
-      !datosCIP.tinta4Color &&
-      !datosCIP.tinta5Color &&
-      !datosCIP.tinta6Color;
+    if (!ordenActiva?.numero_orden) return;
 
-    if (sinTintasCargadas) {
-      const coloresReceta = String(ordenActiva.colores)
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean);
+    const cargarColoresDesdeBD = async () => {
+      const sinTintasCargadas =
+        !datosCIP.tinta1Color &&
+        !datosCIP.tinta2Color &&
+        !datosCIP.tinta3Color &&
+        !datosCIP.tinta4Color &&
+        !datosCIP.tinta5Color &&
+        !datosCIP.tinta6Color;
 
-      if (coloresReceta.length > 0) {
-        setDatosCIP((prev) => ({
-          ...prev,
-          tinta1Color: coloresReceta[0] || '',
-          tinta2Color: coloresReceta[1] || '',
-          tinta3Color: coloresReceta[2] || '',
-          tinta4Color: coloresReceta[3] || '',
-          tinta5Color: coloresReceta[4] || '',
-          tinta6Color: coloresReceta[5] || ''
-        }));
+      if (ordenActiva.colores && sinTintasCargadas) {
+        const coloresReceta = String(ordenActiva.colores)
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean);
+
+        if (coloresReceta.length > 0) {
+          setRecetaTextoBD(ordenActiva.colores);
+          setDatosCIP((prev) => ({
+            ...prev,
+            tinta1Color: coloresReceta[0] || '',
+            tinta2Color: coloresReceta[1] || '',
+            tinta3Color: coloresReceta[2] || '',
+            tinta4Color: coloresReceta[3] || '',
+            tinta5Color: coloresReceta[4] || '',
+            tinta6Color: coloresReceta[5] || ''
+          }));
+          return;
+        }
       }
-    }
-  }, [ordenActiva, datosCIP.tinta1Color, datosCIP.tinta2Color, datosCIP.tinta3Color, datosCIP.tinta4Color, datosCIP.tinta5Color, datosCIP.tinta6Color, setDatosCIP]);
+
+      try {
+        setCargandoColores(true);
+        const res = await apiFetch(`/api/cip/receta/${ordenActiva.numero_orden}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.colores_texto) setRecetaTextoBD(data.colores_texto);
+
+          if (sinTintasCargadas) {
+            setDatosCIP((prev) => ({
+              ...prev,
+              tinta1Color: data.tinta1Color || prev.tinta1Color || '',
+              tinta2Color: data.tinta2Color || prev.tinta2Color || '',
+              tinta3Color: data.tinta3Color || prev.tinta3Color || '',
+              tinta4Color: data.tinta4Color || prev.tinta4Color || '',
+              tinta5Color: data.tinta5Color || prev.tinta5Color || '',
+              tinta6Color: data.tinta6Color || prev.tinta6Color || '',
+              tinta1Lote: prev.tinta1Lote || data.tinta1Lote || '',
+              tinta2Lote: prev.tinta2Lote || data.tinta2Lote || '',
+              tinta3Lote: prev.tinta3Lote || data.tinta3Lote || '',
+              tinta4Lote: prev.tinta4Lote || data.tinta4Lote || '',
+              tinta5Lote: prev.tinta5Lote || data.tinta5Lote || '',
+              tinta6Lote: prev.tinta6Lote || data.tinta6Lote || ''
+            }));
+          }
+        }
+      } catch (err) {
+        console.error('Error al traer colores desde la BD para CIP:', err);
+      } finally {
+        setCargandoColores(false);
+      }
+    };
+
+    cargarColoresDesdeBD();
+  }, [ordenActiva?.numero_orden]);
 
   const actualizarPaquete = (index, campo, valor) => {
     const nuevaMatriz = [...inspeccionPaquetes];
@@ -102,7 +142,7 @@ export default function PantallaCIP({
           maquina: maquina || 'IMP-JS',
           tipo_onda: datosCIP.tipoOnda,
           tipo_chapeton: datosCIP.chapeton,
-          hendido_desplazado: datosCIP.hendidoDesplazado,
+          hendido_desplazado: datosCIP.hendidoDesplazado === 'SI' || datosCIP.hendidoDesplazado === true,
           liner_externo: datosCIP.linerExterno,
           tipo_cierre: datosCIP.tipoCierre,
           tintas_detalle: {
@@ -113,6 +153,18 @@ export default function PantallaCIP({
             tinta5: { color: datosCIP.tinta5Color, lote: datosCIP.tinta5Lote },
             tinta6: { color: datosCIP.tinta6Color, lote: datosCIP.tinta6Lote }
           },
+          tinta_1_color: datosCIP.tinta1Color || '',
+          tinta_1_lote: datosCIP.tinta1Lote || '',
+          tinta_2_color: datosCIP.tinta2Color || '',
+          tinta_2_lote: datosCIP.tinta2Lote || '',
+          tinta_3_color: datosCIP.tinta3Color || '',
+          tinta_3_lote: datosCIP.tinta3Lote || '',
+          tinta_4_color: datosCIP.tinta4Color || '',
+          tinta_4_lote: datosCIP.tinta4Lote || '',
+          tinta_5_color: datosCIP.tinta5Color || '',
+          tinta_5_lote: datosCIP.tinta5Lote || '',
+          tinta_6_color: datosCIP.tinta6Color || '',
+          tinta_6_lote: datosCIP.tinta6Lote || '',
           verificacion_items: verificacion,
           inspeccion_paquetes: inspeccionPaquetes,
           observaciones: datosCIP.observaciones
@@ -175,11 +227,21 @@ export default function PantallaCIP({
         </div>
 
         <div style={{ backgroundColor: '#e9ecef', padding: '12px', marginBottom: '15px', border: '1px solid #ced4da', fontSize: '0.95rem', borderRadius: '4px' }}>
-          <p style={{ margin: '0 0 5px 0' }}><strong>Pedido N°:</strong> {ordenActiva?.numero_orden || 'S/N'} | <strong>Cliente:</strong> {ordenActiva?.cliente || 'Cliente General'}</p>
-          <p style={{ margin: 0 }}><strong>Descripción Producto:</strong> {ordenActiva?.producto_descripcion || ordenActiva?.descripcion || 'Caja corrugada estándar'}</p>
-          {ordenActiva?.colores && (
+          <p style={{ margin: '0 0 5px 0' }}>
+            <strong>Pedido N°:</strong> {ordenActiva?.numero_orden || 'S/N'} | <strong>Cliente:</strong> {ordenActiva?.cliente || 'Cliente General'}
+            {ordenActiva?.codigo_producto && <> | <strong>Cód. Producto:</strong> {ordenActiva.codigo_producto}</>}
+          </p>
+          <p style={{ margin: 0 }}>
+            <strong>Descripción Producto:</strong> {ordenActiva?.descripcion_producto || ordenActiva?.producto_descripcion || ordenActiva?.descripcion || 'Caja corrugada estándar'}
+          </p>
+          {cargandoColores && (
+            <p style={{ margin: '6px 0 0 0', color: '#6c757d', fontStyle: 'italic' }}>
+              ⏳ Buscando receta de colores en la base de datos...
+            </p>
+          )}
+          {(recetaTextoBD || ordenActiva?.colores) && (
             <p style={{ margin: '6px 0 0 0', color: '#0056b3', fontWeight: 'bold' }}>
-              🎨 Receta Maestro de Productos: {ordenActiva.colores}
+              🎨 Receta Maestro de Productos: {recetaTextoBD || ordenActiva.colores}
             </p>
           )}
         </div>
@@ -218,18 +280,17 @@ export default function PantallaCIP({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', fontSize: '0.85rem' }}>
             {[1, 2, 3, 4, 5, 6].map(num => {
               const valorActual = datosCIP[`tinta${num}Color`] || '';
-              // Si por receta viene un color que no esté en el array base, lo incluimos dinámicamente para no perderlo
               const opcionesColor = valorActual && !CATALOGO_COLORES_MAESTRO.includes(valorActual)
                 ? [valorActual, ...CATALOGO_COLORES_MAESTRO]
                 : CATALOGO_COLORES_MAESTRO;
 
               return (
-                <div key={num} style={{ border: '1px solid #ddd', padding: '8px', borderRadius: '4px', backgroundColor: '#f9f9f9' }}>
+                <div key={num} style={{ border: '1px solid #ddd', padding: '8px', borderRadius: '4px', backgroundColor: valorActual ? '#e8f4fd' : '#f9f9f9' }}>
                   <label><strong>{num}° Color:</strong></label>
                   <select
                     value={valorActual}
                     onChange={e => setDatosCIP({ ...datosCIP, [`tinta${num}Color`]: e.target.value })}
-                    style={{ width: '100%', padding: '6px', marginBottom: '6px', borderRadius: '4px', border: '1px solid #adb5bd', backgroundColor: '#fff', fontWeight: valorActual ? 'bold' : 'normal' }}
+                    style={{ width: '100%', padding: '6px', marginBottom: '6px', borderRadius: '4px', border: valorActual ? '2px solid #0d6efd' : '1px solid #adb5bd', backgroundColor: '#fff', fontWeight: valorActual ? 'bold' : 'normal' }}
                   >
                     <option value="">-- Color / Tacho --</option>
                     {opcionesColor.map((col, idx) => (
