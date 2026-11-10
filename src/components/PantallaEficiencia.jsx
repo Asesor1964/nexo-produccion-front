@@ -6,9 +6,79 @@ import {
 import ReporteScrap from './ReporteScrap'; 
 import { apiFetch } from '../services/api'; 
 
+// Respaldo completo de las 64 incidencias oficiales + Set-Up Inicial
+const INCIDENCIAS_OFICIALES = [
+  "00 - Set-Up Inicial",
+  "01- Cambio de Orden",
+  "02- Falta de Personal",
+  "03- Limpiar Refile",
+  "04- Falla Eléctrica",
+  "05- Atascamiento",
+  "06- Mantenimiento Mecánico Correctivo",
+  "08- Cambio Rollo Flejadora",
+  "09- Pausa y Refrigerios",
+  "12- Limpieza Circuito de Tintas",
+  "13- Limpieza Fin de Jornada",
+  "15- Problemas en Flejadora",
+  "18- Clisee Mal Premontado (Proveedor)",
+  "19- Correas Pegadora",
+  "20- Rotación de Grabados",
+  "21- Falla de Instrumentos",
+  "22- Capacitación del Personal",
+  "23- Troqueles sueltos-Falta de gomas-Torcedura de cuchillas",
+  "25- Clisés sueltos (varios productos)",
+  "28- Rotura de Troquel",
+  "29- Rotura de Clisée",
+  "32- Esperar planchas de Linea de Corrugado",
+  "33- Cambio de Máquina (pasar personal)",
+  "34- Cambio de Programa por pedido de Ventas",
+  "35- Limpieza Ruedas de Tiro",
+  "36- Cambio de Racla",
+  "37- Cambio cuchillas Chapetón",
+  "39- Falta de aire",
+  "41- Limpieza de Clisée",
+  "42- Cambio bandas cuerpo troquelador",
+  "44- Problemas en Colero",
+  "46- Problemas en bomba de tintero",
+  "47- Cambio tacho de adhesivo",
+  "48- Relevos en Corrugado",
+  "49- Lavado bandejas de tinteros",
+  "50- Clisee, preparar y encintar",
+  "51- Corte de Energía Eléctrica",
+  "55- Esperar confirmación de Orden de Trabajo",
+  "56- Seleccionar Planchas",
+  "58- Planchas despegadas, separa y seleccionar",
+  "60- Reposicionar clises (Acomodar)",
+  "61- Prensa Fardos",
+  "62- Cambio de Trazabilidad",
+  "63- Rotación Bandas Poliuretano",
+  "64- Falta de autoelevador",
+  "65- Se coloca goma a troquel",
+  "66- Reunión de Personal",
+  "68- Lavado de rolo anilox",
+  "69- Recuperación de Cajas.",
+  "70- Preparación de tintas.",
+  "72- Esperar planchas impresas.",
+  "73- Cambio de Tinta.",
+  "74- Se saco muestras.",
+  "75- Falta de Tarimas.",
+  "76- Buscar Planchas",
+  "77- Falta de Tintas",
+  "82- Buscar troquel",
+  "83- \"Varios\" Operativo",
+  "85- \"Varios\" Alistamiento",
+  "86- \"Varios\" Defecto Corrugado",
+  "87- Capacitación del Personal Seguridad Industrial",
+  "88- Arranque después de Turno Inactivo",
+  "89- Traslado de personal Con carga de máquina",
+  "90- Traslado de personal Sin carga de máquina",
+  "91- Falta de Personal en Planta"
+];
+
 export default function PantallaEficiencia() {
   const [tiemposMuertos, setTiemposMuertos] = useState([]);
   const [paradaEditando, setParadaEditando] = useState(null);
+  const [listaCodigosParada, setListaCodigosParada] = useState(INCIDENCIAS_OFICIALES);
   
   // Pestaña activa dentro del módulo de eficiencia ('tiempos' o 'scrap')
   const [pestanaActiva, setPestanaActiva] = useState('tiempos');
@@ -16,7 +86,7 @@ export default function PantallaEficiencia() {
   // Estado para el filtro mensual
   const [mesSeleccionado, setMesSeleccionado] = useState('TODOS');
 
-  // 1. CARGAR DATOS
+  // 1. CARGAR DATOS Y CATÁLOGO DE PARADAS
   const cargarTiempos = async () => {
     try {
       const res = await apiFetch('/api/pedidos/tiempos-muertos/todos');
@@ -29,8 +99,34 @@ export default function PantallaEficiencia() {
     }
   };
 
+  const cargarCatalogoParadas = async () => {
+    try {
+      const resParadas = await apiFetch('/api/pedidos/recursos/paradas');
+      if (resParadas.ok) {
+        const dataParadas = await resParadas.json();
+        if (Array.isArray(dataParadas) && dataParadas.length > 0) {
+          const formateadas = dataParadas.map(item => {
+            if (typeof item === 'string') return item;
+            const desc = (item.descripcion || '').trim();
+            const cod = (item.codigo || '').trim();
+            if (/^\d+/.test(desc)) return desc;
+            return cod ? `${cod}- ${desc}` : desc;
+          }).filter(Boolean);
+
+          if (formateadas.length > 0) {
+            const unificadas = Array.from(new Set(["00 - Set-Up Inicial", ...formateadas, ...INCIDENCIAS_OFICIALES]));
+            setListaCodigosParada(unificadas);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error cargando catálogo de paradas:", err);
+    }
+  };
+
   useEffect(() => {
     cargarTiempos();
+    cargarCatalogoParadas();
   }, []);
 
   // 2. ELIMINAR (DELETE)
@@ -38,7 +134,11 @@ export default function PantallaEficiencia() {
     if (!window.confirm('¿Seguro que deseas eliminar este registro de tiempo muerto?')) return;
     try {
       const res = await apiFetch(`/api/pedidos/tiempos-muertos/${id}`, { method: 'DELETE' });
-      if (res.ok) cargarTiempos(); 
+      if (res.ok) {
+        cargarTiempos();
+      } else {
+        alert('❌ No se pudo eliminar el registro. Verifica que el backend esté actualizado.');
+      }
     } catch (error) {
       console.error("Error al eliminar", error);
     }
@@ -52,17 +152,22 @@ export default function PantallaEficiencia() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          minutos_duracion: paradaEditando.minutos_duracion,
+          minutos_duracion: Number(paradaEditando.minutos_duracion) || 0,
           codigo_parada: paradaEditando.codigo_parada,
+          motivo: paradaEditando.codigo_parada,
           observaciones: paradaEditando.observaciones || ''
         })
       });
       if (res.ok) {
         setParadaEditando(null); 
         cargarTiempos(); 
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`❌ No se pudo guardar el cambio: ${err.error || res.statusText}`);
       }
     } catch (error) {
       console.error("Error al actualizar", error);
+      alert('❌ Error de conexión al intentar actualizar el tiempo muerto.');
     }
   };
 
@@ -368,8 +473,8 @@ export default function PantallaEficiencia() {
                       {parada.minutos_duracion}
                     </td>
                     <td style={{ padding: '15px', textAlign: 'center' }}>
-                      <button onClick={() => setParadaEditando(parada)} style={{ padding: '8px 12px', marginRight: '5px', backgroundColor: '#ffc107', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✏️</button>
-                      <button onClick={() => eliminarParada(parada.id)} style={{ padding: '8px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🗑️</button>
+                      <button onClick={() => setParadaEditando(parada)} style={{ padding: '8px 12px', marginRight: '5px', backgroundColor: '#ffc107', border: 'none', borderRadius: '5px', cursor: 'pointer' }} title="Editar minutos o motivo">✏️</button>
+                      <button onClick={() => eliminarParada(parada.id)} style={{ padding: '8px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }} title="Eliminar parada">🗑️</button>
                     </td>
                   </tr>
                 ))}
@@ -377,16 +482,45 @@ export default function PantallaEficiencia() {
             </table>
           </div>
 
-          {/* MODAL DE EDICIÓN */}
+          {/* MODAL DE EDICIÓN CON SELECTOR DE LAS 64 INCIDENCIAS */}
           {paradaEditando && (
             <div style={{ position: 'fixed', top: 0, left: '0', width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-              <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', width: '90%', maxWidth: '500px' }}>
+              <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', width: '90%', maxWidth: '520px' }}>
                 <h3 style={{ marginTop: 0, color: '#dc3545' }}>Editar Tiempo Muerto</h3>
                 <form onSubmit={guardarEdicion} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <label style={{ fontWeight: 'bold' }}>Minutos de Duración:</label>
-                  <input type="number" value={paradaEditando.minutos_duracion} onChange={(e) => setParadaEditando({...paradaEditando, minutos_duracion: e.target.value})} style={{ padding: '10px', fontSize: '1.2rem', borderRadius: '5px', border: '1px solid #ccc' }} />
-                  <label style={{ fontWeight: 'bold' }}>Motivo de la Parada (Código):</label>
-                  <input type="text" value={paradaEditando.codigo_parada} onChange={(e) => setParadaEditando({...paradaEditando, codigo_parada: e.target.value})} style={{ padding: '10px', fontSize: '1.1rem', borderRadius: '5px', border: '1px solid #ccc' }} />
+                  <input 
+                    type="number" 
+                    min="0"
+                    required
+                    value={paradaEditando.minutos_duracion} 
+                    onChange={(e) => setParadaEditando({...paradaEditando, minutos_duracion: e.target.value})} 
+                    style={{ padding: '10px', fontSize: '1.2rem', borderRadius: '5px', border: '1px solid #ccc' }} 
+                  />
+
+                  <label style={{ fontWeight: 'bold' }}>Motivo de la Parada (Código Oficial):</label>
+                  <select
+                    required
+                    value={paradaEditando.codigo_parada || ''}
+                    onChange={(e) => setParadaEditando({ ...paradaEditando, codigo_parada: e.target.value })}
+                    style={{
+                      padding: '12px',
+                      fontSize: '1.05rem',
+                      borderRadius: '5px',
+                      border: '2px solid #0d6efd',
+                      backgroundColor: 'white',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {/* Si el código actual es un Set-Up con atraso u otro texto especial, lo conservamos en la lista */}
+                    {paradaEditando.codigo_parada && !listaCodigosParada.includes(paradaEditando.codigo_parada) && (
+                      <option value={paradaEditando.codigo_parada}>{paradaEditando.codigo_parada}</option>
+                    )}
+                    {listaCodigosParada.map((inc, idx) => (
+                      <option key={idx} value={inc}>{inc}</option>
+                    ))}
+                  </select>
+
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
                     <button type="button" onClick={() => setParadaEditando(null)} style={{ padding: '10px 20px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>Cancelar</button>
                     <button type="submit" style={{ padding: '10px 20px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Guardar Cambios</button>

@@ -5,8 +5,10 @@ import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
 const STORAGE_KEY = 'nexo_estado_maquinista_v1';
 
-// Respaldo completo de las 64 incidencias oficiales (Tipos_Incidencias.csv)
-const INCIDENCIAS_RESPALDO = [
+// Respaldo completo de las 64 incidencias oficiales (Tipos_Incidencias.csv) + Set-Up
+// 👈 Exportado para reutilizarlo en el modal de Editar Tiempo Muerto de Auditoría
+export const INCIDENCIAS_RESPALDO = [
+  "00 - Set-Up Inicial",
   "01- Cambio de Orden",
   "02- Falta de Personal",
   "03- Limpiar Refile",
@@ -236,7 +238,7 @@ export default function PantallaMaquinista() {
               const desc = (item.descripcion || '').trim();
               const cod = (item.codigo || '').trim();
               if (/^\d+/.test(desc)) return desc;
-              return cod ? `${cod} - ${desc}` : desc;
+              return cod ? `${cod}- ${desc}` : desc;
             }).filter(Boolean);
 
             if (formateadas.length > 0) {
@@ -305,7 +307,9 @@ export default function PantallaMaquinista() {
             'en preparación', 
             'en produccion', 
             'en producción', 
-            'pausada'
+            'pausada',
+            'finalizada parcial',
+            'parcial'
           ].includes(est);
         });
         setColaPedidos(soloHabilitadas);
@@ -342,7 +346,7 @@ export default function PantallaMaquinista() {
           operador: operadorSeleccionado,
           cajas: Number(cantidadFabricada) || 0,
           velocidad: Number(velocidadVal) || 0,
-          segundos_fase: Number(segundosFaseVal) || 0 // 👈 ¡Ahora sí viaja al backend!
+          segundos_fase: Number(segundosFaseVal) || 0
         })
       });
     } catch (err) {
@@ -358,7 +362,6 @@ export default function PantallaMaquinista() {
       let estadoActual = 'ESPERA';
       let velActual = 0;
       
-      // Calculamos al vuelo desde inicioFaseMs para máxima exactitud
       const segsReales = (enSetup || produccionActiva) && inicioFaseMs
         ? Math.max(0, Math.floor((Date.now() - inicioFaseMs) / 1000))
         : segundosRef.current;
@@ -377,7 +380,7 @@ export default function PantallaMaquinista() {
       notificarEstadoEnVivo(estadoActual, velActual, segsReales, ordenActiva);
     };
 
-    enviarLatido(); // Envía de inmediato al montar/cambiar de fase
+    enviarLatido();
     const latido = setInterval(enviarLatido, 2000);
 
     return () => clearInterval(latido);
@@ -423,7 +426,6 @@ export default function PantallaMaquinista() {
     tiempoObjetivoMinutos = Math.ceil(ordenActiva.cantidad_programada / VELOCIDAD_ESTANDAR);
     const minutosBrutos = Math.floor(segundosTranscurridos / 60);
     
-    // Sumamos solo las paradas registradas que ocurrieron en la fase de producción actual
     const totalMinutosParadosEnProduccion = listaParadas
       .filter(p => !String(p.codigo || '').toLowerCase().includes('set-up'))
       .reduce((acc, parada) => acc + (Number(parada.minutos) || 0), 0);
@@ -556,18 +558,23 @@ export default function PantallaMaquinista() {
     notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, 0);
   };
 
-  const finalizarOrdenBD = async () => {
+  // Divisor seguro para el cálculo de pallets (evita división por cero si el input está vacío)
+  const capPalletSegura = Math.max(1, Number(capacidadPalletStandard) || 1);
+
+  // Función unificada para cierre Total o Parcial
+  const cerrarOrdenProduccion = async (estadoDestino = 'Finalizada') => {
     if (!ordenActiva) return;
     const cantFabReal = Number(cantidadFabricada) || 0;
-    
+    const descProductoReal = ordenActiva.descripcion_producto || ordenActiva.producto_descripcion || 'Producto';
+
     try {
-      // 1. Finalizar la orden en producción
+      // 1. Actualizar la orden en producción
       const respuesta = await apiFetch(`/api/pedidos/${ordenActiva.numero_orden}/produccion`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           cantidad_fabricada: cantFabReal, 
-          estado: 'Finalizada',
+          estado: estadoDestino,
           paradas: listaParadas,
           maquina: maquinaSeleccionada,
           operador: operadorSeleccionado
@@ -575,9 +582,9 @@ export default function PantallaMaquinista() {
       });
 
       if (respuesta.ok) {
-        // 2. Disparar automáticamente la creación del pallet en Expedición/Galpón
+        // 2. Disparar automáticamente la creación de los pallets en Expedición/Galpón
         if (cantFabReal > 0) {
-          await apiFetch('/api/expedicion/pallets', { // 👈 RUTA CORREGIDA A /api/expedicion/pallets
+          await apiFetch('/api/expedicion/pallets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -585,23 +592,23 @@ export default function PantallaMaquinista() {
               maquina: maquinaSeleccionada,
               operador: operadorSeleccionado,
               cliente: ordenActiva.cliente,
-              producto_descripcion: ordenActiva.producto_descripcion,
+              producto_descripcion: descProductoReal,
               cantidad_unidades: cantFabReal,
               capacidad_standard: capPalletSegura
             })
-          }).catch(err => console.error("Error al registrar pallet automático al finalizar:", err));
+          }).catch(err => console.error("Error al registrar pallet automático:", err));
         }
 
-        alert(`✅ Orden ${ordenActiva.numero_orden} Finalizada y enviada a Expedición.\n👤 Operador: ${operadorSeleccionado}\n📦 Cajas: ${cantFabReal}\n⏱️ Producción Pura: ${formatearTiempo(segundosTranscurridos)}`);
+        alert(`✅ Orden ${ordenActiva.numero_orden} registrada como "${estadoDestino}" y enviada a Expedición.\n👤 Operador: ${operadorSeleccionado}\n📦 Cajas: ${cantFabReal}\n⏱️ Tiempo: ${formatearTiempo(segundosTranscurridos)}`);
         localStorage.removeItem(STORAGE_KEY);
         cancelarOrden();
         cargarColaDeTrabajo(maquinaSeleccionada);
       } else {
         const errData = await respuesta.json().catch(() => ({}));
-        alert(`❌ No se pudo finalizar la orden: ${errData.error || respuesta.status}`);
+        alert(`❌ No se pudo cerrar la orden: ${errData.error || respuesta.status}`);
       }
     } catch (error) { 
-      console.error('Error al finalizar orden:', error);
+      console.error('Error al cerrar orden:', error);
       alert('❌ Error de conexión con el servidor.');
     }
   };
@@ -662,9 +669,6 @@ export default function PantallaMaquinista() {
     notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, segundosRef.current);
   };
 
-  // Divisor seguro para el cálculo de pallets (evita división por cero si el input está vacío)
-  const capPalletSegura = Math.max(1, Number(capacidadPalletStandard) || 1);
-
   return (
     <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'sans-serif', width: '100%', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>⚙️ Terminal de Operador en Planta</h1>
@@ -721,7 +725,10 @@ export default function PantallaMaquinista() {
                   <tr key={pedido.numero_orden} style={{ borderBottom: '1px solid #dee2e6', backgroundColor: index === 0 ? '#fff3cd' : 'white' }}>
                     <td style={{ padding: '15px', fontWeight: 'bold', color: index === 0 ? '#d39e00' : '#6c757d' }}>{index === 0 ? '▶ PRÓXIMA' : index + 1}</td>
                     <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '1.2rem' }}>{pedido.numero_orden}</td>
-                    <td style={{ padding: '15px' }}><strong>{pedido.cliente}</strong><br/><span style={{ fontSize: '0.9rem', color: '#555' }}>{pedido.producto_descripcion}</span></td>
+                    <td style={{ padding: '15px' }}>
+                      <strong>{pedido.cliente}</strong><br/>
+                      <span style={{ fontSize: '0.9rem', color: '#555' }}>{pedido.descripcion_producto || pedido.producto_descripcion}</span>
+                    </td>
                     <td style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold' }}>{pedido.cantidad_programada}</td>
                     <td style={{ padding: '15px', textAlign: 'center' }}>
                       <button onClick={() => seleccionarOrdenParaProducir(pedido)} disabled={index !== 0} style={{ padding: '10px 20px', backgroundColor: index === 0 ? '#28a745' : '#e9ecef', color: index === 0 ? 'white' : '#adb5bd', border: 'none', borderRadius: '5px', cursor: index === 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>Preparar</button>
@@ -741,14 +748,14 @@ export default function PantallaMaquinista() {
           </div>
           <div style={{ textAlign: 'left', fontSize: '1.3rem', lineHeight: '2' }}>
             <p><strong>Cliente:</strong> {ordenActiva.cliente}</p>
-            <p><strong>Producto:</strong> {ordenActiva.producto_descripcion}</p>
+            <p><strong>Producto:</strong> {ordenActiva.descripcion_producto || ordenActiva.producto_descripcion}</p>
             <p><strong>Cant. Programada:</strong> <span style={{ color: '#dc3545', fontWeight: 'bold' }}>{ordenActiva.cantidad_programada} unid.</span></p>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: '2rem' }}>
             <button onClick={cancelarOrden} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>VOLVER A LA COLA</button>
             <button onClick={iniciarSetup} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>▶ COMENZAR SET-UP (Preparación)</button>
           </div>
-        </div>         
+        </div>        
       )}
 
       {enSetup && ordenActiva && (
@@ -839,7 +846,7 @@ export default function PantallaMaquinista() {
           
           <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '8px', textAlign: 'left', marginBottom: '2rem', borderLeft: '5px solid #0056b3' }}>
             <p style={{ margin: '0 0 10px 0', fontSize: '1.5rem' }}><strong>Orden {ordenActiva.numero_orden}</strong> | {ordenActiva.cliente}</p>
-            <p style={{ margin: 0, fontSize: '1.2rem' }}>{ordenActiva.producto_descripcion}</p>
+            <p style={{ margin: 0, fontSize: '1.2rem' }}>{ordenActiva.descripcion_producto || ordenActiva.producto_descripcion}</p>
           </div>
 
           {/* --- SECCIÓN DE CONTROL DE PALLETS PARA EXPEDICIÓN (CÁLCULO VISUAL EN VIVO) --- */}
@@ -899,9 +906,21 @@ export default function PantallaMaquinista() {
                 style={{ fontSize: '1.8rem', width: '80%', textAlign: 'center', padding: '8px', border: '2px solid #28a745', borderRadius: '8px', marginBottom: '10px' }} 
               />
               
-              <button onClick={finalizarOrdenBD} style={{ width: '100%', padding: '12px', fontSize: '1.1rem', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>
-                ✅ FINALIZAR ORDEN Y CERRAR
-              </button>
+              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                <button 
+                  onClick={() => cerrarOrdenProduccion('Finalizada Parcial')} 
+                  style={{ flex: 1, padding: '12px 8px', fontSize: '0.95rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+                  title="Guarda las unidades hechas hasta ahora y envía pallets a Expedición"
+                >
+                  ⏸ CIERRE PARCIAL
+                </button>
+                <button 
+                  onClick={() => cerrarOrdenProduccion('Finalizada')} 
+                  style={{ flex: 1.3, padding: '12px 8px', fontSize: '1rem', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  ✅ FINALIZAR ORDEN
+                </button>
+              </div>
             </div>
 
           </div>
