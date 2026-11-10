@@ -4,7 +4,7 @@ import { apiFetch } from '../services/api';
 export default function PantallaExpedicion() {
   const [pestanaActiva, setPestanaActiva] = useState('stock'); // 'stock' | 'traspaso' | 'despacho' | 'informes'
   const [stockGalpon, setStockGalpon] = useState([]);
-  const [stockFisico, setStockFisico] = useState([]); // Lista de pallets individuales para despachos
+  const [stockFisico, setStockFisico] = useState([]); // Lista de pallets individuales
   const [busqueda, setBusqueda] = useState('');
   
   // Estados para modal CRUD Manual
@@ -16,7 +16,10 @@ export default function PantallaExpedicion() {
     producto_descripcion: '',
     unidades: '',
     m2_unitario: '',
-    estado: 'En Galpón'
+    estado: 'En Galpón',
+    cant_completos: '',
+    capacidad_completos: '',
+    unidades_saldo: ''
   });
 
   // Estados para Importar desde Producción
@@ -29,8 +32,12 @@ export default function PantallaExpedicion() {
   // Estados para Traspaso
   const [traspasoData, setTraspasoData] = useState({ pallet_origen_id: '', orden_destino: '', unidades: '' });
 
-  // Estados para Despacho
-  const [despachoData, setDespachoData] = useState({ pallet_id: '', unidades: '', remito: '' });
+  // 🚚 NUEVOS ESTADOS PARA DESPACHO MÚLTIPLE (POR LOTES / CAMIÓN)
+  const [filtroOrdenDespacho, setFiltroOrdenDespacho] = useState('');
+  const [palletsSeleccionados, setPalletsSeleccionados] = useState({}); // { [palletId]: cantidadADespachar }
+  const [remitoDespacho, setRemitoDespacho] = useState('');
+  const [cantidadRapidaPallets, setCantidadRapidaPallets] = useState('');
+  const [procesandoDespacho, setProcesandoDespacho] = useState(false);
 
   // Estados para Informes
   const [informeTipo, setInformeTipo] = useState('dia');
@@ -39,11 +46,9 @@ export default function PantallaExpedicion() {
 
   const cargarDatos = async () => {
     try {
-      // 1. Stock resumido para la tabla principal
       const resStock = await apiFetch('/api/expedicion/stock');
       if (resStock.ok) setStockGalpon(await resStock.json());
 
-      // 2. Stock físico individual para selects de despacho y traspaso
       const resFisico = await apiFetch('/api/expedicion/stock-fisico');
       if (resFisico.ok) setStockFisico(await resFisico.json());
     } catch (err) {
@@ -71,7 +76,6 @@ export default function PantallaExpedicion() {
     }
   };
 
-  // Confirmar Importación con desglose automático de pallets
   const confirmarImportacionProduccion = async () => {
     if (!ordenSeleccionadaImportar || !cantidadAImportar || Number(cantidadAImportar) <= 0) {
       alert('⚠️ Selecciona una orden e ingresa una cantidad de unidades válida.');
@@ -79,9 +83,9 @@ export default function PantallaExpedicion() {
     }
 
     const numOrden = ordenSeleccionadaImportar.numero_orden || ordenSeleccionadaImportar.orden || ordenSeleccionadaImportar.id;
-    const maq = ordenSeleccionadaImportar.maquina || ordenSeleccionadaImportar.codigo_maquina || 'PLANTA';
+    const maq = ordenSeleccionadaImportar.maquina_asignada || ordenSeleccionadaImportar.maquina || ordenSeleccionadaImportar.codigo_maquina || 'PLANTA';
     const cli = ordenSeleccionadaImportar.cliente || 'Sin Cliente';
-    const prod = ordenSeleccionadaImportar.producto_descripcion || ordenSeleccionadaImportar.descripcion || ordenSeleccionadaImportar.producto || 'Producto';
+    const prod = ordenSeleccionadaImportar.descripcion_producto || ordenSeleccionadaImportar.producto_descripcion || ordenSeleccionadaImportar.descripcion || ordenSeleccionadaImportar.producto || 'Producto';
 
     try {
       const res = await apiFetch('/api/expedicion/pallets', {
@@ -129,7 +133,6 @@ export default function PantallaExpedicion() {
     if (pestanaActiva === 'informes') cargarInformes();
   }, [pestanaActiva, fechaInforme, informeTipo]);
 
-  // Función para eliminar todos los pallets activos de una orden en la vista resumida
   const eliminarOrdenCompleta = async (numeroOrden) => {
     if (!window.confirm(`¿Seguro que deseas eliminar los registros de la Orden #${numeroOrden}?`)) return;
     try {
@@ -169,28 +172,144 @@ export default function PantallaExpedicion() {
     }
   };
 
-  const ejecutarDespacho = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch('/api/expedicion/despachar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pallet_id: despachoData.pallet_id,
-          unidades_despachadas: Number(despachoData.unidades),
-          remito: despachoData.remito
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(`✅ Despacho registrado. m² sumados: ${Number(data.m2_despachados).toFixed(2)} m²`);
-        setDespachoData({ pallet_id: '', unidades: '', remito: '' });
-        cargarDatos();
+  // =========================================================================
+  // 🚚 LÓGICA DE SELECCIÓN Y DESPACHO MÚLTIPLE (CHECKBOXES)
+  // =========================================================================
+  
+  // Filtra los pallets físicos según la orden o cliente escrito en el buscador de despacho
+  const palletsFiltradosDespacho = stockFisico.filter(p => {
+    if (!filtroOrdenDespacho.trim()) return true;
+    const termino = filtroOrdenDespacho.toLowerCase().trim();
+    return (
+      String(p.numero_orden).includes(termino) ||
+      String(p.cliente || '').toLowerCase().includes(termino) ||
+      String(p.producto_descripcion || '').toLowerCase().includes(termino)
+    );
+  });
+
+  // Tildar o destildar un pallet individual
+  const toggleSeleccionPallet = (pallet) => {
+    setPalletsSeleccionados(prev => {
+      const copia = { ...prev };
+      if (copia[pallet.id] !== undefined) {
+        delete copia[pallet.id];
       } else {
-        alert(`❌ Error: ${data.error}`);
+        copia[pallet.id] = Number(pallet.cantidad_unidades);
       }
+      return copia;
+    });
+  };
+
+  // Cambiar la cantidad a despachar de un pallet tildado (por si lleva parcial)
+  const cambiarCantidadPalletSeleccionado = (palletId, maxUnidades, valor) => {
+    const num = Number(valor);
+    if (num < 0) return;
+    setPalletsSeleccionados(prev => ({
+      ...prev,
+      [palletId]: num > maxUnidades ? maxUnidades : valor
+    }));
+  };
+
+  // Seleccionar todos los pallets visibles en el filtro actual
+  const seleccionarTodosVisibles = () => {
+    const todosMarcados = palletsFiltradosDespacho.length > 0 &&
+      palletsFiltradosDespacho.every(p => palletsSeleccionados[p.id] !== undefined);
+
+    if (todosMarcados) {
+      const copia = { ...palletsSeleccionados };
+      palletsFiltradosDespacho.forEach(p => delete copia[p.id]);
+      setPalletsSeleccionados(copia);
+    } else {
+      const copia = { ...palletsSeleccionados };
+      palletsFiltradosDespacho.forEach(p => {
+        copia[p.id] = Number(p.cantidad_unidades);
+      });
+      setPalletsSeleccionados(copia);
+    }
+  };
+
+  // Botón rápido: "Seleccionar primeros N pallets" (ej. entran 8 en el camión)
+  const seleccionarPrimerosNPallets = () => {
+    const n = Number(cantidadRapidaPallets);
+    if (!n || n <= 0) {
+      alert('⚠️ Ingresa cuántos pallets entran en el camión (ej: 8).');
+      return;
+    }
+    const primerosN = palletsFiltradosDespacho.slice(0, n);
+    const nuevaSeleccion = {};
+    primerosN.forEach(p => {
+      nuevaSeleccion[p.id] = Number(p.cantidad_unidades);
+    });
+    setPalletsSeleccionados(nuevaSeleccion);
+  };
+
+  // Totales en vivo de lo seleccionado para subir al camión
+  const idsSeleccionados = Object.keys(palletsSeleccionados);
+  const resumenCamion = idsSeleccionados.reduce((acc, id) => {
+    const palletObj = stockFisico.find(p => String(p.id) === String(id));
+    const cant = Number(palletsSeleccionados[id]) || 0;
+    if (palletObj && cant > 0) {
+      acc.pallets += 1;
+      acc.unidades += cant;
+      acc.m2 += cant * Number(palletObj.m2_unitario || 0);
+    }
+    return acc;
+  }, { pallets: 0, unidades: 0, m2: 0 });
+
+  // Ejecutar el despacho de todos los pallets tildados
+  const ejecutarDespachoMultiple = async (e) => {
+    e.preventDefault();
+    if (resumenCamion.pallets === 0) {
+      alert('⚠️ Debes tildar al menos un pallet para despachar.');
+      return;
+    }
+
+    if (!window.confirm(`¿Confirmas la salida de ${resumenCamion.pallets} pallet(s) (${resumenCamion.unidades} cajas / ${resumenCamion.m2.toFixed(2)} m²)?`)) {
+      return;
+    }
+
+    setProcesandoDespacho(true);
+    let m2Acumulados = 0;
+    let errores = [];
+
+    try {
+      for (const id of idsSeleccionados) {
+        const cantDespachar = Number(palletsSeleccionados[id]);
+        if (cantDespachar <= 0) continue;
+
+        const res = await apiFetch('/api/expedicion/despachar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pallet_id: Number(id),
+            unidades_despachadas: cantDespachar,
+            remito: remitoDespacho || 'S/N'
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          m2Acumulados += Number(data.m2_despachados || 0);
+        } else {
+          errores.push(`Pallet #${id}: ${data.error}`);
+        }
+      }
+
+      if (errores.length === 0) {
+        alert(`✅ ¡Despacho múltiple completado con éxito!\n📦 Pallets despachados: ${resumenCamion.pallets}\n📐 Total m²: ${m2Acumulados.toFixed(2)} m²`);
+      } else {
+        alert(`⚠️ Algunos pallets tuvieron problemas:\n${errores.join('\n')}`);
+      }
+
+      setPalletsSeleccionados({});
+      setRemitoDespacho('');
+      setCantidadRapidaPallets('');
+      cargarDatos();
     } catch (err) {
-      console.error('Error en despacho:', err);
+      console.error('Error en despacho múltiple:', err);
+      alert('❌ Error de conexión al procesar el despacho.');
+    } finally {
+      setProcesandoDespacho(false);
     }
   };
 
@@ -199,6 +318,9 @@ export default function PantallaExpedicion() {
     String(p.cliente || '').toLowerCase().includes(busqueda.toLowerCase()) ||
     String(p.producto_descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
   );
+
+  // Lista de órdenes únicas en galpón para el selector rápido en Despacho
+  const ordenesUnicasEnGalpon = Array.from(new Set(stockFisico.map(p => p.numero_orden)));
 
   return (
     <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
@@ -269,7 +391,17 @@ export default function PantallaExpedicion() {
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                          <button onClick={() => setPestanaActiva('despacho')} style={{ padding: '6px 12px', backgroundColor: '#198754', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>🚚 Despachar</button>
+                          <button 
+                            onClick={() => {
+                              // 🎯 Al tocar Despachar en la fila, filtra automáticamente esta orden en la pestaña de despacho
+                              setFiltroOrdenDespacho(String(p.numero_orden));
+                              setPalletsSeleccionados({});
+                              setPestanaActiva('despacho');
+                            }} 
+                            style={{ padding: '6px 12px', backgroundColor: '#198754', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                          >
+                            🚚 Despachar
+                          </button>
                           <button onClick={() => eliminarOrdenCompleta(p.numero_orden)} style={{ padding: '6px 10px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }} title="Eliminar pallets de esta orden">🗑️</button>
                         </div>
                       </td>
@@ -305,30 +437,238 @@ export default function PantallaExpedicion() {
         </div>
       )}
 
-      {/* CONTENIDO 3: REGISTRAR DESPACHO (Usa stock físico individual) */}
+      {/* CONTENIDO 3: REGISTRAR DESPACHO (CON FILTRO DE PEDIDO Y CHECKBOXES PARA CAMIÓN) */}
       {pestanaActiva === 'despacho' && (
-        <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', maxWidth: '600px', margin: '0 auto', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-          <h3 style={{ color: '#343a40', marginTop: 0 }}>🚚 Despacho por Pallet Físico (Total o Parcial)</h3>
-          <p style={{ color: '#666', fontSize: '0.95rem' }}>Selecciona el pallet físico exacto que se retira. Si el cliente lleva solo una parte, el remanente queda en galpón.</p>
+        <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', maxWidth: '1000px', margin: '0 auto', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+          <h3 style={{ color: '#343a40', marginTop: 0 }}>🚚 Consola de Carga de Camión (Selección Múltiple de Pallets)</h3>
+          <p style={{ color: '#666', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
+            Filtra por el pedido a despachar, tilda los pallets que suben al camión (ej. 8 pallets) y registra la salida en un solo paso.
+          </p>
 
-          <form onSubmit={ejecutarDespacho} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '1.5rem' }}>
-            <label style={{ fontWeight: 'bold' }}>Seleccionar Pallet Físico:</label>
-            <select value={despachoData.pallet_id} onChange={(e) => setDespachoData({...despachoData, pallet_id: e.target.value})} required style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }}>
-              <option value="">-- Seleccione Pallet Físico --</option>
-              {stockFisico.map(p => (
-                <option key={p.id} value={p.id}>
-                  Pallet #{p.id} | Ord: {p.numero_orden} | {p.cliente} | Disp: {p.cantidad_unidades} u. {p.es_parcial ? '(Parcial)' : '(Completo)'}
-                </option>
-              ))}
-            </select>
+          {/* BARRA DE FILTRO DE ORDEN + SELECCIÓN RÁPIDA DE N PALLETS */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '8px', border: '1px solid #dee2e6', marginBottom: '1.5rem' }}>
+            <div>
+              <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px', color: '#0d6efd' }}>
+                1️⃣ Filtrar Pedido / Orden a Despachar:
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Escribe N° Orden o Cliente..."
+                  value={filtroOrdenDespacho}
+                  onChange={(e) => {
+                    setFiltroOrdenDespacho(e.target.value);
+                    setPalletsSeleccionados({});
+                  }}
+                  style={{ ...estiloInput(), flex: 1, fontWeight: 'bold' }}
+                />
+                <select
+                  value={ordenesUnicasEnGalpon.includes(Number(filtroOrdenDespacho)) ? filtroOrdenDespacho : ''}
+                  onChange={(e) => {
+                    setFiltroOrdenDespacho(e.target.value);
+                    setPalletsSeleccionados({});
+                  }}
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: 'white' }}
+                >
+                  <option value="">Ver todas las órdenes</option>
+                  {ordenesUnicasEnGalpon.map(numOrd => {
+                    const info = stockGalpon.find(s => Number(s.numero_orden) === Number(numOrd));
+                    return (
+                      <option key={numOrd} value={numOrd}>
+                        Orden #{numOrd} - {info?.cliente || ''} ({info?.total_pallets_fisicos || ''} pallets)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
 
-            <label style={{ fontWeight: 'bold' }}>Cantidad a Despachar (Unidades):</label>
-            <input type="number" placeholder="Ej: 1000" value={despachoData.unidades} onChange={(e) => setDespachoData({...despachoData, unidades: e.target.value})} required style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }} />
+            <div>
+              <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px', color: '#198754' }}>
+                2️⃣ Selección Rápida por Capacidad de Camión:
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="number"
+                  placeholder="Ej: 8 pallets"
+                  value={cantidadRapidaPallets}
+                  onChange={(e) => setCantidadRapidaPallets(e.target.value)}
+                  style={{ ...estiloInput(), width: '140px' }}
+                />
+                <button
+                  type="button"
+                  onClick={seleccionarPrimerosNPallets}
+                  style={{ padding: '8px 14px', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  ⚡ Tildar primeros {cantidadRapidaPallets || 'N'} pallets
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPalletsSeleccionados({})}
+                  style={{ padding: '8px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+          </div>
 
-            <label style={{ fontWeight: 'bold' }}>N° de Remito / Transporte:</label>
-            <input type="text" placeholder="Ej: Remito 0001-00004589" value={despachoData.remito} onChange={(e) => setDespachoData({...despachoData, remito: e.target.value})} style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }} />
+          {/* TABLA DE PALLETS FÍSICOS CON CHECKBOXES */}
+          <div style={{ maxHeight: '380px', overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '8px', marginBottom: '1.5rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e9ecef', zIndex: 1 }}>
+                <tr>
+                  <th style={{ padding: '12px', textAlign: 'center', width: '50px' }}>
+                    <input
+                      type="checkbox"
+                      onChange={seleccionarTodosVisibles}
+                      checked={palletsFiltradosDespacho.length > 0 && palletsFiltradosDespacho.every(p => palletsSeleccionados[p.id] !== undefined)}
+                      style={{ transform: 'scale(1.3)', cursor: 'pointer' }}
+                      title="Seleccionar todos los visibles"
+                    />
+                  </th>
+                  <th style={{ padding: '12px' }}>Pallet</th>
+                  <th style={{ padding: '12px' }}>Orden</th>
+                  <th style={{ padding: '12px' }}>Cliente / Producto</th>
+                  <th style={{ padding: '12px', textAlign: 'center' }}>Tipo</th>
+                  <th style={{ padding: '12px', textAlign: 'center' }}>Disponible</th>
+                  <th style={{ padding: '12px', textAlign: 'center', width: '160px' }}>Cajas a Despachar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {palletsFiltradosDespacho.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: '#6c757d' }}>
+                      No hay pallets disponibles para este filtro.
+                    </td>
+                  </tr>
+                ) : (
+                  palletsFiltradosDespacho.map(p => {
+                    const estaSeleccionado = palletsSeleccionados[p.id] !== undefined;
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => toggleSeleccionPallet(p)}
+                        style={{
+                          borderBottom: '1px solid #dee2e6',
+                          backgroundColor: estaSeleccionado ? '#e8f5e9' : 'white',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.15s'
+                        }}
+                      >
+                        <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={estaSeleccionado}
+                            onChange={() => toggleSeleccionPallet(p)}
+                            style={{ transform: 'scale(1.3)', cursor: 'pointer' }}
+                          />
+                        </td>
+                        <td style={{ padding: '10px', fontWeight: 'bold', color: '#0d6efd' }}>P#{p.id}</td>
+                        <td style={{ padding: '10px', fontWeight: 'bold' }}>#{p.numero_orden}</td>
+                        <td style={{ padding: '10px' }}>
+                          <strong>{p.cliente}</strong>
+                          <div style={{ fontSize: '0.82rem', color: '#555' }}>{p.producto_descripcion}</div>
+                        </td>
+                        <td style={{ padding: '10px', textAlign: 'center' }}>
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            fontSize: '0.78rem',
+                            fontWeight: 'bold',
+                            backgroundColor: p.es_parcial ? '#fff3cd' : '#d1e7dd',
+                            color: p.es_parcial ? '#856404' : '#0f5132'
+                          }}>
+                            {p.es_parcial ? 'Parcial' : 'Completo'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold' }}>
+                          {p.cantidad_unidades} u.
+                        </td>
+                        <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          {estaSeleccionado ? (
+                            <input
+                              type="number"
+                              value={palletsSeleccionados[p.id]}
+                              max={p.cantidad_unidades}
+                              min={1}
+                              onChange={(e) => cambiarCantidadPalletSeleccionado(p.id, Number(p.cantidad_unidades), e.target.value)}
+                              style={{
+                                width: '100px',
+                                padding: '6px',
+                                textAlign: 'center',
+                                fontWeight: 'bold',
+                                borderRadius: '4px',
+                                border: '2px solid #198754'
+                              }}
+                            />
+                          ) : (
+                            <span style={{ color: '#adb5bd', fontSize: '0.85rem' }}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
 
-            <button type="submit" style={{ padding: '12px', backgroundColor: '#198754', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '1.1rem', cursor: 'pointer' }}>✅ Registrar Salida y Descontar Stock</button>
+          {/* RESUMEN DE CARGA Y FORMULARIO FINAL */}
+          <form onSubmit={ejecutarDespachoMultiple} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: '#d1e7dd',
+              color: '#0f5132',
+              padding: '15px 20px',
+              borderRadius: '8px',
+              border: '1px solid #badbcc',
+              flexWrap: 'wrap',
+              gap: '10px'
+            }}>
+              <div style={{ fontSize: '1.1rem' }}>
+                🚛 <strong>Pallets al Camión:</strong> {resumenCamion.pallets} bulto(s)
+              </div>
+              <div style={{ fontSize: '1.1rem' }}>
+                📦 <strong>Total Cajas:</strong> {resumenCamion.unidades} u.
+              </div>
+              <div style={{ fontSize: '1.1rem' }}>
+                📐 <strong>Total m² a Despachar:</strong> {resumenCamion.m2.toFixed(2)} m²
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '250px' }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>N° de Remito / Transporte:</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Remito 0001-00004589 / Patente AB123CD"
+                  value={remitoDespacho}
+                  onChange={(e) => setRemitoDespacho(e.target.value)}
+                  style={estiloInput()}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={procesandoDespacho || resumenCamion.pallets === 0}
+                style={{
+                  padding: '14px 28px',
+                  backgroundColor: resumenCamion.pallets === 0 ? '#adb5bd' : '#198754',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontWeight: 'bold',
+                  fontSize: '1.1rem',
+                  cursor: resumenCamion.pallets === 0 ? 'not-allowed' : 'pointer',
+                  marginTop: '22px'
+                }}
+              >
+                {procesandoDespacho ? '⏳ Procesando salida...' : `✅ Registrar Salida (${resumenCamion.pallets} Pallets)`}
+              </button>
+            </div>
           </form>
         </div>
       )}
@@ -401,7 +741,7 @@ export default function PantallaExpedicion() {
                 <option value="">-- Seleccione una Orden --</option>
                 {ordenesProducidas.map((ord, index) => {
                   const numOrd = ord.numero_orden || ord.orden || ord.id_orden || index + 1;
-                  const desc = ord.producto_descripcion || ord.descripcion || ord.producto || '';
+                  const desc = ord.descripcion_producto || ord.producto_descripcion || ord.descripcion || ord.producto || '';
                   const cantFab = ord.cantidad_fabricada || ord.cantidad_producida || ord.unidades_producidas || 0;
                   return (
                     <option key={index} value={index}>
@@ -445,7 +785,6 @@ export default function PantallaExpedicion() {
                   return;
                 }
 
-                // 1. Guardar los pallets completos si los hay
                 for (let i = 0; i < cantComp; i++) {
                   await apiFetch('/api/expedicion/pallets/crud', {
                     method: 'POST',
@@ -462,7 +801,6 @@ export default function PantallaExpedicion() {
                   });
                 }
 
-                // 2. Guardar el pallet de saldo/parcial si existe
                 if (saldo > 0) {
                   await apiFetch('/api/expedicion/pallets/crud', {
                     method: 'POST',
@@ -491,34 +829,32 @@ export default function PantallaExpedicion() {
               <label style={{ fontWeight: 'bold' }}>N° de Orden (Autocompleta datos):</label>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input 
-  type="number" 
-  value={formCrud.numero_orden} 
-  onChange={async (e) => {
-    const val = e.target.value;
-    setFormCrud(prev => ({ ...prev, numero_orden: val }));
-    
-    // 🛡️ Solo busca en la API cuando el número de orden tiene al menos 4 dígitos
-    if (val.length >= 5) {
-      try {
-        const res = await apiFetch(`/api/expedicion/ordenes/buscar/${val}`);
-        if (res.ok) {
-          const datos = await res.json();
-          setFormCrud(prev => ({
-            ...prev,
-            cliente: datos.cliente,
-            producto_descripcion: datos.producto_descripcion,
-            m2_unitario: datos.m2_unitario
-          }));
-        }
-      } catch (err) {
-        // Silencioso
-      }
-    }
-  }} 
-  placeholder="Ej: 48326"
-  required 
-  style={{ ...estiloInput(), flex: 1, fontWeight: 'bold', fontSize: '1.1rem', color: '#0d6efd' }} 
-/>
+                  type="number" 
+                  value={formCrud.numero_orden} 
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    setFormCrud(prev => ({ ...prev, numero_orden: val }));
+                    if (val.length >= 4) {
+                      try {
+                        const res = await apiFetch(`/api/expedicion/ordenes/buscar/${val}`);
+                        if (res.ok) {
+                          const datos = await res.json();
+                          setFormCrud(prev => ({
+                            ...prev,
+                            cliente: datos.cliente,
+                            producto_descripcion: datos.producto_descripcion,
+                            m2_unitario: datos.m2_unitario
+                          }));
+                        }
+                      } catch (err) {
+                        // Silencioso
+                      }
+                    }
+                  }} 
+                  placeholder="Ej: 48326"
+                  required 
+                  style={{ ...estiloInput(), flex: 1, fontWeight: 'bold', fontSize: '1.1rem', color: '#0d6efd' }} 
+                />
               </div>
               
               <label>Cliente:</label>
