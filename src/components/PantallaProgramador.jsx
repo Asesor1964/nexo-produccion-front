@@ -16,7 +16,7 @@ export default function PantallaProgramador() {
           .map(p => ({
             id: p.id,
             cliente: p.cliente || 'Sin cliente',
-            producto: p.producto_descripcion || 'Sin descripción',
+            producto: p.descripcion_producto || p.producto_descripcion || 'Sin descripción',
             estado: p.estado || 'Pendiente',
             maquina: p.maquina_asignada || 'COR-JS',
             prioridad: p.prioridad_secuencia || 999, 
@@ -99,7 +99,7 @@ export default function PantallaProgramador() {
 
       let inicioDatos = -1;
       let tipoArchivo = null;
-      let indicesCols = {};
+      let indicesCols = { colsColores: [] };
 
       const normalizar = (str) =>
         String(str || '')
@@ -108,6 +108,23 @@ export default function PantallaProgramador() {
           .normalize('NFD')
           .replace(/[\u0300-\u036f]/g, '')
           .trim();
+
+      // Detector de cabeceras de colores tanto para Productos como para Pedidos
+      const detectarColumnasColor = (cols) => {
+        const colsColores = [];
+        cols.forEach((h, idx) => {
+          const cleanH = normalizar(h);
+          if (
+            cleanH.includes('color') ||
+            cleanH.includes('tinta') ||
+            cleanH.includes('impresi') ||
+            /^c[1-6]$/.test(cleanH)
+          ) {
+            colsColores.push(idx);
+          }
+        });
+        return colsColores;
+      };
 
       for (let i = 0; i < Math.min(15, lineas.length); i++) {
         if (!lineas[i].trim()) continue;
@@ -118,6 +135,7 @@ export default function PantallaProgramador() {
 
         if (lineaNorm.includes('fecha pedido') || lineaNorm.includes('fecha entrega') || lineaNorm.includes('m2 pend')) {
           tipoArchivo = 'PEDIDOS';
+          indicesCols.colsColores = detectarColumnasColor(cols);
           cols.forEach((h, idx) => {
             const cleanH = normalizar(h);
             if (idx === 0 || cleanH.includes('numero') || cleanH === 'nro') indicesCols.numero = idx;
@@ -142,13 +160,17 @@ export default function PantallaProgramador() {
 
         if (lineaNorm.includes('codigo') || lineaNorm.includes('cliente') || lineaNorm.includes('descripci') || lineaNorm.includes('largo')) {
           tipoArchivo = 'PRODUCTOS';
+          indicesCols.colsColores = detectarColumnasColor(cols);
           cols.forEach((h, idx) => {
             const cleanH = normalizar(h);
             if (cleanH.includes('cod') || idx === 0) indicesCols.codigo_producto = idx;
             if (cleanH.includes('cliente')) indicesCols.cliente = idx;
             if (cleanH.startsWith('descripci')) indicesCols.descripcion = idx;
+            if (cleanH.includes('material') || cleanH.includes('onda') || cleanH.includes('calidad')) indicesCols.material = idx;
             if (cleanH.includes('largo')) indicesCols.largo = idx;
             if (cleanH.includes('ancho') && !cleanH.includes('pref')) indicesCols.ancho = idx;
+            if (cleanH.includes('m2') || cleanH.includes('superficie')) indicesCols.superficie_m2 = idx;
+            if (cleanH.includes('herramienta') || cleanH.includes('troquel') || cleanH.includes('clise')) indicesCols.herramientas = idx;
             if (cleanH.includes('ruta')) indicesCols.ruta = idx;
           });
           inicioDatos = i + 1;
@@ -167,6 +189,48 @@ export default function PantallaProgramador() {
         return isNaN(n) ? null : n;
       };
 
+      // Función inteligente que extrae hasta 6 colores de la fila del CSV
+      const extraerColoresDeFila = (cols) => {
+        let encontrados = [];
+
+        // 1. Por cabeceras explícitas de color/tinta
+        if (indicesCols.colsColores && indicesCols.colsColores.length > 0) {
+          indicesCols.colsColores.forEach(idx => {
+            const val = String(cols[idx] || '').replace(/"/g, '').trim();
+            if (val && val !== '-' && val !== '0' && val.toUpperCase() !== 'NO' && val.toUpperCase() !== 'NULL') {
+              // Si una sola celda trae varios separados por coma o barra
+              val.split(/[,;/]/).forEach(sub => {
+                const limpio = sub.trim();
+                if (limpio) encontrados.push(limpio);
+              });
+            }
+          });
+        }
+
+        // 2. Respaldo por patrón de código de tinta (GCMI, PU, CYAN, MAGENTA, NEGRO, etc.) en cualquier columna
+        if (encontrados.length === 0) {
+          const patronTinta = /^(GCMI\s*\d+|PU\s*\d+|NEGRO.*|NEG\s+.*|MAGENTA|CYAN.*|AMA\s+PROC|BARNIZ|VIOLETA|VER\s+LIM|CEL\s+LED|GRIS\s+.*|AZUL\s+.*|COOL\s+GRAY.*)/i;
+          cols.forEach((celda, idx) => {
+            if (idx === indicesCols.descripcion || idx === indicesCols.cliente) return;
+            const val = String(celda || '').replace(/"/g, '').trim();
+            if (patronTinta.test(val)) {
+              encontrados.push(val.toUpperCase());
+            }
+          });
+        }
+
+        const unicos = encontrados.slice(0, 6);
+        return {
+          colores: unicos.join(', ') || null,
+          color_1: unicos[0] || null,
+          color_2: unicos[1] || null,
+          color_3: unicos[2] || null,
+          color_4: unicos[3] || null,
+          color_5: unicos[4] || null,
+          color_6: unicos[5] || null
+        };
+      };
+
       if (tipoArchivo === 'PRODUCTOS') {
         const payloadProductos = [];
         for (let i = inicioDatos; i < lineas.length; i++) {
@@ -175,13 +239,19 @@ export default function PantallaProgramador() {
           const codProd = cols[indicesCols.codigo_producto ?? 0]?.replace(/"/g, '').trim();
           if (!codProd) continue;
 
+          const infoColores = extraerColoresDeFila(cols);
+
           payloadProductos.push({
             codigo_producto: codProd,
             cliente: cols[indicesCols.cliente]?.replace(/"/g, '').trim() || null,
             descripcion: cols[indicesCols.descripcion]?.replace(/"/g, '').trim() || null,
+            material: indicesCols.material !== undefined ? cols[indicesCols.material]?.replace(/"/g, '').trim() : null,
             largo_mm: limpiarNum(cols[indicesCols.largo]),
             ancho_mm: limpiarNum(cols[indicesCols.ancho]),
-            ruta_sugerida: cols[indicesCols.ruta ?? cols.length - 1]?.replace(/"/g, '').trim() || 'COR-JS'
+            superficie_m2: indicesCols.superficie_m2 !== undefined ? limpiarNum(cols[indicesCols.superficie_m2]) : null,
+            herramientas: indicesCols.herramientas !== undefined ? cols[indicesCols.herramientas]?.replace(/"/g, '').trim() : null,
+            ruta_sugerida: cols[indicesCols.ruta ?? cols.length - 1]?.replace(/"/g, '').trim() || 'COR-JS',
+            ...infoColores
           });
         }
 
@@ -204,6 +274,8 @@ export default function PantallaProgramador() {
       }
 
       const payloadPedidos = [];
+      const productosDesdePedidosMap = new Map();
+
       for (let i = inicioDatos; i < lineas.length; i++) {
         if (!lineas[i].trim()) continue;
         const cols = lineas[i].split(';');
@@ -216,6 +288,12 @@ export default function PantallaProgramador() {
         const codProd = cols[indicesCols.codigo_producto ?? 10]?.replace(/"/g, '').trim();
         const cantProg = limpiarNum(cols[indicesCols.cantidad ?? 20]) || 0;
         const rutaVal = cols[indicesCols.ruta ?? 39]?.replace(/"/g, '').trim() || '';
+        const clienteVal = cols[indicesCols.cliente ?? 5]?.replace(/"/g, '').trim() || null;
+        const descVal = cols[indicesCols.descripcion ?? 13]?.replace(/"/g, '').trim() || null;
+        const largoVal = limpiarNum(cols[indicesCols.largo ?? 17]);
+        const anchoVal = limpiarNum(cols[indicesCols.ancho ?? 18]);
+
+        const infoColores = extraerColoresDeFila(cols);
 
         if (cantProg > 0) {
           payloadPedidos.push({
@@ -224,21 +302,44 @@ export default function PantallaProgramador() {
             cantidad_programada: cantProg,
             fecha_pedido: cols[indicesCols.fecha_pedido ?? 1]?.replace(/"/g, '').trim() || null,
             fecha_entrega: cols[indicesCols.fecha_entrega ?? 2]?.replace(/"/g, '').trim() || null,
-            cliente: cols[indicesCols.cliente ?? 5]?.replace(/"/g, '').trim() || null,
+            cliente: clienteVal,
             rubro: cols[indicesCols.rubro ?? 6]?.replace(/"/g, '').trim() || null,
-            descripcion: cols[indicesCols.descripcion ?? 13]?.replace(/"/g, '').trim() || null,
-            largo: limpiarNum(cols[indicesCols.largo ?? 17]),
-            ancho: limpiarNum(cols[indicesCols.ancho ?? 18]),
+            descripcion: descVal,
+            largo: largoVal,
+            ancho: anchoVal,
             plancha: cols[indicesCols.plancha ?? 19]?.replace(/"/g, '').trim() || null,
             m2_tot: limpiarNum(cols[indicesCols.m2_tot ?? 21]),
             m2_pend: limpiarNum(cols[indicesCols.m2_pend ?? 22]),
             peso: limpiarNum(cols[indicesCols.peso ?? 26]),
-            maquina_asignada: rutaVal
+            maquina_asignada: rutaVal,
+            ...infoColores
           });
+
+          // Si el pedido tiene código de producto, también alimentamos maestro_productos automáticamente
+          if (codProd && codProd !== 'SIN_CODIGO') {
+            productosDesdePedidosMap.set(codProd, {
+              codigo_producto: codProd,
+              cliente: clienteVal,
+              descripcion: descVal,
+              largo_mm: largoVal,
+              ancho_mm: anchoVal,
+              ruta_sugerida: rutaVal || 'COR-JS',
+              ...infoColores
+            });
+          }
         }
       }
 
       try {
+        // Si extrajimos fichas de productos/colores desde el CSV de pedidos, las sincronizamos en segundo plano
+        if (productosDesdePedidosMap.size > 0) {
+          await apiFetch('/api/productos/sincronizar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productos: Array.from(productosDesdePedidosMap.values()) })
+          }).catch(() => {});
+        }
+
         const respuesta = await apiFetch('/api/pedidos/sincronizar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -309,7 +410,6 @@ export default function PantallaProgramador() {
 
     if (sourceIndex === destIndex) return;
 
-    // Si hay un filtro aplicado, operamos sobre la sublista y luego fusionamos con el resto
     const itemsFiltrados = Array.from(pedidosFiltrados);
     const [movido] = itemsFiltrados.splice(sourceIndex, 1);
     itemsFiltrados.splice(destIndex, 0, movido);
@@ -373,7 +473,7 @@ export default function PantallaProgramador() {
       </div>
 
       <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '2rem', borderLeft: '5px solid #6c757d' }}>
-        <h3 style={{ marginTop: 0, color: '#343a40' }}>Actualizar Base de Datos (Maestro_pedidos.csv)</h3>
+        <h3 style={{ marginTop: 0, color: '#343a40' }}>Actualizar Base de Datos (Maestro_pedidos.csv / Maestro_Productos.csv)</h3>
         <form onSubmit={procesarCSV} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <input 
             type="file" 
@@ -471,7 +571,6 @@ export default function PantallaProgramador() {
                               <td style={{ padding: '15px 10px', fontWeight: 'bold' }}>
                                 <span style={{ cursor: 'grab', marginRight: '10px', color: '#aaa' }}>☰</span>
                                 {pedido.id}
-                                {/* Botón rápido de emergencia para mandar al puesto 1 con 1 clic */}
                                 {index !== 0 && (
                                   <button 
                                     onClick={() => forzarAlPrimerPuesto(pedido)}
