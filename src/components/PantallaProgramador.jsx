@@ -12,7 +12,15 @@ export default function PantallaProgramador() {
       const respuesta = await apiFetch('/api/pedidos');
       if (respuesta.ok) {
         const data = await respuesta.json();
+        
+        // 🎯 ESTADOS QUE YA NO DEBEN APARECER EN LA COLA ACTIVA
+        const ESTADOS_OCULTOS = ['FINALIZADA', 'CERRADO POR ACUERDO', 'CUMPLIDA', 'COMPLETADA'];
+
         const pedidosFormateados = data
+          .filter(p => {
+            const est = (p.estado || 'Pendiente').trim().toUpperCase();
+            return !ESTADOS_OCULTOS.includes(est); // Deja pasar 'Pendiente', 'Habilitada', 'En Proceso' y 'Finalizada Parcial'
+          })
           .map(p => ({
             id: p.id,
             cliente: p.cliente || 'Sin cliente',
@@ -421,6 +429,29 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 DAR POR CUMPLIDA MANUALMENTE UNA ORDEN HABILITADA (O DE PRUEBA) Y QUITARLA DE LA COLA
+  const darPorCumplida = async (pedido) => {
+    const confirmar = window.confirm(`¿Confirmás que la orden #${pedido.id} (${pedido.cliente}) ya fue fabricada/cumplida? Se quitará de la cola activa.`);
+    if (!confirmar) return;
+
+    setPedidos(prev => prev.filter(p => p.id !== pedido.id));
+
+    try {
+      const respuesta = await apiFetch(`/api/pedidos/${pedido.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'Finalizada' }),
+      });
+      if (!respuesta.ok) {
+        alert('❌ Error al actualizar el estado en la BD.');
+        cargarPedidosDesdeBD();
+      }
+    } catch (error) {
+      console.error('Error al dar por cumplida la orden:', error);
+      cargarPedidosDesdeBD();
+    }
+  };
+
   // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros de familia activos)
   const handleDragEnd = async (resultado) => {
     if (!resultado.destination) return;
@@ -715,10 +746,30 @@ export default function PantallaProgramador() {
                                     style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
                                     Enviar a Planta
                                   </button>
-                                ) : (
-                                  <span style={{ color: pedido.estado === 'Finalizada Parcial' ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }}>
-                                    {pedido.estado === 'Finalizada Parcial' ? '⚡' : '✓'}
+                                ) : pedido.estado === 'Finalizada Parcial' ? (
+                                  <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '1.2rem' }} title="Atender decisión comercial en columna Estado">
+                                    ⚡
                                   </span>
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                    <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.1rem' }} title="En planta">✓</span>
+                                    <button
+                                      onClick={() => darPorCumplida(pedido)}
+                                      style={{
+                                        padding: '5px 10px',
+                                        backgroundColor: '#198754',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontWeight: 'bold',
+                                        fontSize: '0.75rem'
+                                      }}
+                                      title="Marcar como ya fabricada y quitar de la cola"
+                                    >
+                                      ✅ Cumplida
+                                    </button>
+                                  </div>
                                 )}
                               </td>
                             </tr>
