@@ -78,7 +78,23 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 EXTRAER RUTAS ÚNICAS Y LIMPIAS DIRECTAMENTE DE LOS PEDIDOS CARGADOS
+  // 🎯 1. FUNCIÓN PARA AGRUPAR CUALQUIER RUTA EN SU FAMILIA BASE
+  const obtenerFamiliaRuta = (ruta) => {
+    if (!ruta) return '';
+    const limpia = ruta.trim().toUpperCase();
+    const partes = limpia.split('-');
+
+    // Si empieza con COR (o CORX4) y tiene segunda parte (ej: COR-JS-DYF, COR-WARX2-PBO, CORX4-WAR-PEGX4)
+    if (partes[0].startsWith('COR') && partes.length >= 2) {
+      const maquinaBase = partes[1].replace(/X\d+$/i, '');
+      return `COR-${maquinaBase}`;
+    }
+
+    // Rutas directas sin prefijo COR- (DIV, ESQ, FOC1, FOC2, IMP, MAC, MAQ3, REB)
+    return partes[0];
+  };
+
+  // 🎯 2. EXTRAER RUTAS EXACTAS ÚNICAS (Para el desplegable <select> de cada orden)
   const rutasUnicasPlanta = Array.from(
     new Set(
       pedidos
@@ -86,6 +102,19 @@ export default function PantallaProgramador() {
         .filter(m => m && isNaN(m) && !m.includes(','))
     )
   ).sort();
+
+  // 🎯 3. EXTRAER FAMILIAS DE RUTA Y CONTAR ÓRDENES (Para los botones de Filtro Ruta)
+  const conteoPorFamilia = {};
+  pedidos.forEach(p => {
+    const raw = p.maquina ? p.maquina.trim().toUpperCase() : '';
+    if (raw && isNaN(raw) && !raw.includes(',')) {
+      const fam = obtenerFamiliaRuta(raw);
+      if (fam) {
+        conteoPorFamilia[fam] = (conteoPorFamilia[fam] || 0) + 1;
+      }
+    }
+  });
+  const familiasUnicasPlanta = Object.keys(conteoPorFamilia).sort();
 
   const procesarCSV = (e) => {
     e.preventDefault();
@@ -401,7 +430,7 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros activos)
+  // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros de familia activos)
   const handleDragEnd = async (resultado) => {
     if (!resultado.destination) return;
 
@@ -459,9 +488,10 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA
   const pedidosFiltrados = pedidos.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
-    return p.maquina && p.maquina.trim().toUpperCase() === filtroMaquina.trim().toUpperCase();
+    return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
   });
 
   return (
@@ -506,17 +536,17 @@ export default function PantallaProgramador() {
               }}>
               Todas ({pedidos.length})
             </button>
-            {rutasUnicasPlanta.map((ruta) => (
+            {familiasUnicasPlanta.map((familia) => (
               <button 
-                key={ruta}
-                onClick={() => setFiltroMaquina(ruta)}
+                key={familia}
+                onClick={() => setFiltroMaquina(familia)}
                 style={{ 
                   padding: '6px 14px', borderRadius: '5px', border: '1px solid #ccc', 
-                  backgroundColor: filtroMaquina === ruta ? '#17a2b8' : '#f8f9fa', 
-                  color: filtroMaquina === ruta ? 'white' : '#333', 
+                  backgroundColor: filtroMaquina === familia ? '#17a2b8' : '#f8f9fa', 
+                  color: filtroMaquina === familia ? 'white' : '#333', 
                   cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' 
                 }}>
-                {ruta}
+                {familia} ({conteoPorFamilia[familia]})
               </button>
             ))}
           </div>
