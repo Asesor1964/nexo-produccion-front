@@ -385,9 +385,66 @@ export default function PantallaExpedicion() {
                       <td style={{ padding: '12px', fontSize: '0.9rem', color: '#555' }}>{p.producto_descripcion}</td>
                       <td style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold', color: '#0d6efd' }}>{p.stock_total_cajas} u.</td>
                       <td style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold', color: '#198754' }}>{Number(p.m2_stock_total || 0).toFixed(2)} m²</td>
-                      <td style={{ padding: '12px', textAlign: 'center', fontSize: '0.85rem', color: '#495057' }}>
-                        📦 <strong>{p.pallets_completos}</strong> comp. / <strong>{p.pallets_parciales}</strong> parc. <br/>
-                        <span style={{ color: '#6c757d', fontSize: '0.8rem' }}>{p.detalle_pallets}</span>
+                      <td style={{ padding: '12px', textAlign: 'center', fontSize: '0.85rem', color: '#495057', maxWidth: '340px' }}>
+                        <div style={{ marginBottom: '6px' }}>
+                          📦 <strong>{p.pallets_completos}</strong> comp. /{' '}
+                          <strong style={{ color: Number(p.pallets_parciales) > 0 ? '#d97706' : 'inherit' }}>
+                            {p.pallets_parciales}
+                          </strong>{' '}
+                          parc.
+                        </div>
+
+                        {p.detalle_pallets && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              gap: '5px',
+                              justifyContent: 'center',
+                              maxHeight: '68px',
+                              overflowY: 'auto',
+                              padding: '2px'
+                            }}
+                          >
+                            {(() => {
+                              const items = String(p.detalle_pallets)
+                                .split('|')
+                                .map(s => s.trim())
+                                .filter(Boolean);
+
+                              // Detectar la cantidad máxima para resaltar en amarillo los parciales (menor cantidad)
+                              const cantidades = items.map(item => {
+                                const match = item.match(/\((\d+)/);
+                                return match ? parseInt(match[1], 10) : 0;
+                              });
+                              const maxCant = Math.max(...cantidades, 0);
+
+                              return items.map((palletTxt, idx) => {
+                                const match = palletTxt.match(/\((\d+)/);
+                                const cant = match ? parseInt(match[1], 10) : maxCant;
+                                const esParcial = Number(p.pallets_parciales) > 0 && cant < maxCant;
+
+                                return (
+                                  <span
+                                    key={idx}
+                                    style={{
+                                      whiteSpace: 'nowrap',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 'bold',
+                                      padding: '2px 7px',
+                                      borderRadius: '4px',
+                                      backgroundColor: esParcial ? '#fff3cd' : '#f1f3f5',
+                                      color: esParcial ? '#856404' : '#495057',
+                                      border: esParcial ? '1px solid #ffc107' : '1px solid #dee2e6'
+                                    }}
+                                  >
+                                    {palletTxt}
+                                  </span>
+                                );
+                              });
+                            })()}
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
