@@ -22,17 +22,18 @@ export default function PantallaExpedicion() {
     unidades_saldo: ''
   });
 
-  // Estados para Importar desde Producción
+  // 📦 ESTADOS PARA IMPORTACIÓN MÚLTIPLE DESDE PRODUCCIÓN (CON CHECKBOXES)
   const [mostrarModalImportar, setMostrarModalImportar] = useState(false);
   const [ordenesProducidas, setOrdenesProducidas] = useState([]);
-  const [ordenSeleccionadaImportar, setOrdenSeleccionadaImportar] = useState(null);
-  const [cantidadAImportar, setCantidadAImportar] = useState('');
-  const [capacidadImportar, setCapacidadImportar] = useState(1000);
+  const [ordenesSeleccionadasImportar, setOrdenesSeleccionadasImportar] = useState({}); // { [numOrden]: { orden, cantidad, capacidad } }
+  const [filtroModalImportar, setFiltroModalImportar] = useState('');
+  const [capacidadGlobalImportar, setCapacidadGlobalImportar] = useState(1000);
+  const [procesandoImportacion, setProcesandoImportacion] = useState(false);
 
   // Estados para Traspaso
   const [traspasoData, setTraspasoData] = useState({ pallet_origen_id: '', orden_destino: '', unidades: '' });
 
-  // 🚚 NUEVOS ESTADOS PARA DESPACHO MÚLTIPLE (POR LOTES / CAMIÓN)
+  // 🚚 ESTADOS PARA DESPACHO MÚLTIPLE (POR LOTES / CAMIÓN)
   const [filtroOrdenDespacho, setFiltroOrdenDespacho] = useState('');
   const [palletsSeleccionados, setPalletsSeleccionados] = useState({}); // { [palletId]: cantidadADespachar }
   const [remitoDespacho, setRemitoDespacho] = useState('');
@@ -56,15 +57,29 @@ export default function PantallaExpedicion() {
     }
   };
 
+  // =========================================================================
+  // 📥 LÓGICA DE IMPORTACIÓN MÚLTIPLE DESDE PRODUCCIÓN
+  // =========================================================================
+
+  const obtenerNumeroOrden = (ord, idx = 0) =>
+    ord.numero_orden || ord.orden || ord.id_orden || ord.id || idx + 1;
+
+  const obtenerCantidadSugerida = (ord) => {
+    const fab = Number(ord.cantidad_fabricada || ord.cantidad_producida || ord.unidades_producidas || 0);
+    if (fab > 0) return fab;
+    const prog = Number(ord.cantidad_programada || ord.cantidad || 0);
+    return prog > 0 ? prog : 1000;
+  };
+
   const cargarOrdenesProducidas = async () => {
     try {
       const res = await apiFetch('/api/expedicion/ordenes-producidas');
       if (res.ok) {
         const data = await res.json();
         setOrdenesProducidas(data);
-        setOrdenSeleccionadaImportar(null);
-        setCantidadAImportar('');
-        setCapacidadImportar(1000);
+        setOrdenesSeleccionadasImportar({});
+        setFiltroModalImportar('');
+        setCapacidadGlobalImportar(1000);
         setMostrarModalImportar(true);
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -76,43 +91,146 @@ export default function PantallaExpedicion() {
     }
   };
 
+  // Filtrar órdenes dentro del modal por buscador
+  const ordenesProducidasFiltradas = ordenesProducidas.filter((ord, idx) => {
+    if (!filtroModalImportar.trim()) return true;
+    const t = filtroModalImportar.toLowerCase().trim();
+    const numOrd = String(obtenerNumeroOrden(ord, idx));
+    const cli = String(ord.cliente || '').toLowerCase();
+    const desc = String(ord.descripcion_producto || ord.producto_descripcion || ord.descripcion || ord.producto || '').toLowerCase();
+    return numOrd.includes(t) || cli.includes(t) || desc.includes(t);
+  });
+
+  // Tildar o destildar una orden individual para importar
+  const toggleSeleccionOrdenImportar = (ord, idx) => {
+    const numOrd = String(obtenerNumeroOrden(ord, idx));
+    setOrdenesSeleccionadasImportar(prev => {
+      const copia = { ...prev };
+      if (copia[numOrd]) {
+        delete copia[numOrd];
+      } else {
+        copia[numOrd] = {
+          orden: ord,
+          cantidad: obtenerCantidadSugerida(ord),
+          capacidad: Number(capacidadGlobalImportar) || 1000
+        };
+      }
+      return copia;
+    });
+  };
+
+  // Seleccionar o desmarcar todas las órdenes visibles (omite por defecto las que ya están en galpón)
+  const seleccionarTodasOrdenesImportar = () => {
+    const ordenesEnGalponSet = new Set(stockGalpon.map(s => String(s.numero_orden)));
+    const candidatas = ordenesProducidasFiltradas.filter((ord, idx) => !ordenesEnGalponSet.has(String(obtenerNumeroOrden(ord, idx))));
+    const listaBase = candidatas.length > 0 ? candidatas : ordenesProducidasFiltradas;
+
+    const todasMarcadas = listaBase.length > 0 &&
+      listaBase.every((ord, idx) => ordenesSeleccionadasImportar[String(obtenerNumeroOrden(ord, idx))] !== undefined);
+
+    if (todasMarcadas) {
+      const copia = { ...ordenesSeleccionadasImportar };
+      ordenesProducidasFiltradas.forEach((ord, idx) => {
+        delete copia[String(obtenerNumeroOrden(ord, idx))];
+      });
+      setOrdenesSeleccionadasImportar(copia);
+    } else {
+      const copia = { ...ordenesSeleccionadasImportar };
+      listaBase.forEach((ord, idx) => {
+        const numOrd = String(obtenerNumeroOrden(ord, idx));
+        copia[numOrd] = {
+          orden: ord,
+          cantidad: obtenerCantidadSugerida(ord),
+          capacidad: Number(capacidadGlobalImportar) || 1000
+        };
+      });
+      setOrdenesSeleccionadasImportar(copia);
+    }
+  };
+
+  const cambiarDatoOrdenSeleccionada = (numOrd, campo, valor) => {
+    setOrdenesSeleccionadasImportar(prev => ({
+      ...prev,
+      [numOrd]: {
+        ...prev[numOrd],
+        [campo]: valor
+      }
+    }));
+  };
+
+  const aplicarCapacidadGlobalATodas = (nuevaCap) => {
+    setCapacidadGlobalImportar(nuevaCap);
+    setOrdenesSeleccionadasImportar(prev => {
+      const copia = {};
+      Object.keys(prev).forEach(k => {
+        copia[k] = { ...prev[k], capacidad: Number(nuevaCap) || 1000 };
+      });
+      return copia;
+    });
+  };
+
   const confirmarImportacionProduccion = async () => {
-    if (!ordenSeleccionadaImportar || !cantidadAImportar || Number(cantidadAImportar) <= 0) {
-      alert('⚠️ Selecciona una orden e ingresa una cantidad de unidades válida.');
+    const claves = Object.keys(ordenesSeleccionadasImportar);
+    if (claves.length === 0) {
+      alert('⚠️ Tilda al menos una orden de la lista para ingresar al galpón.');
       return;
     }
 
-    const numOrden = ordenSeleccionadaImportar.numero_orden || ordenSeleccionadaImportar.orden || ordenSeleccionadaImportar.id;
-    const maq = ordenSeleccionadaImportar.maquina_asignada || ordenSeleccionadaImportar.maquina || ordenSeleccionadaImportar.codigo_maquina || 'PLANTA';
-    const cli = ordenSeleccionadaImportar.cliente || 'Sin Cliente';
-    const prod = ordenSeleccionadaImportar.descripcion_producto || ordenSeleccionadaImportar.producto_descripcion || ordenSeleccionadaImportar.descripcion || ordenSeleccionadaImportar.producto || 'Producto';
+    // Validar que todas las seleccionadas tengan cantidad > 0
+    const sinCantidad = claves.filter(k => !ordenesSeleccionadasImportar[k].cantidad || Number(ordenesSeleccionadasImportar[k].cantidad) <= 0);
+    if (sinCantidad.length > 0) {
+      alert(`⚠️ La(s) orden(es) #${sinCantidad.join(', #')} tienen cantidad 0. Ingresa cuántas cajas se produjeron antes de importar.`);
+      return;
+    }
+
+    setProcesandoImportacion(true);
+    let importadasOk = 0;
+    let errores = [];
 
     try {
-      const res = await apiFetch('/api/expedicion/pallets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          numero_orden: numOrden,
-          maquina: maq,
-          cliente: cli,
-          producto_descripcion: prod,
-          cantidad_unidades: Number(cantidadAImportar),
-          capacidad_standard: Number(capacidadImportar) || 1000
-        })
-      });
+      for (const key of claves) {
+        const item = ordenesSeleccionadasImportar[key];
+        const ord = item.orden;
+        const numOrden = obtenerNumeroOrden(ord);
+        const maq = ord.maquina_asignada || ord.maquina || ord.codigo_maquina || 'PLANTA';
+        const cli = ord.cliente || 'Sin Cliente';
+        const prod = ord.descripcion_producto || ord.producto_descripcion || ord.descripcion || ord.producto || 'Producto';
 
-      if (res.ok) {
-        alert('✅ Orden importada y desglosada en pallets físicos con éxito.');
+        const res = await apiFetch('/api/expedicion/pallets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            numero_orden: numOrden,
+            maquina: maq,
+            cliente: cli,
+            producto_descripcion: prod,
+            cantidad_unidades: Number(item.cantidad),
+            capacidad_standard: Number(item.capacidad) || 1000
+          })
+        });
+
+        if (res.ok) {
+          importadasOk++;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          errores.push(`Orden #${numOrden}: ${errData.error || 'Error al importar'}`);
+        }
+      }
+
+      if (errores.length === 0) {
+        alert(`✅ Se importaron y desglosaron ${importadasOk} orden(es) en el galpón con éxito.`);
         setMostrarModalImportar(false);
-        setOrdenSeleccionadaImportar(null);
-        setCantidadAImportar('');
+        setOrdenesSeleccionadasImportar({});
         cargarDatos();
       } else {
-        const errData = await res.json();
-        alert(`❌ Error al importar: ${errData.error || 'Error desconocido'}`);
+        alert(`⚠️ Se importaron ${importadasOk} órdenes, pero hubo errores en:\n${errores.join('\n')}`);
+        cargarDatos();
       }
     } catch (err) {
-      console.error('Error al importar orden:', err);
+      console.error('Error al importar órdenes en lote:', err);
+      alert('❌ Error de conexión al importar órdenes.');
+    } finally {
+      setProcesandoImportacion(false);
     }
   };
 
@@ -176,7 +294,6 @@ export default function PantallaExpedicion() {
   // 🚚 LÓGICA DE SELECCIÓN Y DESPACHO MÚLTIPLE (CHECKBOXES)
   // =========================================================================
   
-  // Filtra los pallets físicos según la orden o cliente escrito en el buscador de despacho
   const palletsFiltradosDespacho = stockFisico.filter(p => {
     if (!filtroOrdenDespacho.trim()) return true;
     const termino = filtroOrdenDespacho.toLowerCase().trim();
@@ -187,7 +304,6 @@ export default function PantallaExpedicion() {
     );
   });
 
-  // Tildar o destildar un pallet individual
   const toggleSeleccionPallet = (pallet) => {
     setPalletsSeleccionados(prev => {
       const copia = { ...prev };
@@ -200,7 +316,6 @@ export default function PantallaExpedicion() {
     });
   };
 
-  // Cambiar la cantidad a despachar de un pallet tildado (por si lleva parcial)
   const cambiarCantidadPalletSeleccionado = (palletId, maxUnidades, valor) => {
     const num = Number(valor);
     if (num < 0) return;
@@ -210,7 +325,6 @@ export default function PantallaExpedicion() {
     }));
   };
 
-  // Seleccionar todos los pallets visibles en el filtro actual
   const seleccionarTodosVisibles = () => {
     const todosMarcados = palletsFiltradosDespacho.length > 0 &&
       palletsFiltradosDespacho.every(p => palletsSeleccionados[p.id] !== undefined);
@@ -228,7 +342,6 @@ export default function PantallaExpedicion() {
     }
   };
 
-  // Botón rápido: "Seleccionar primeros N pallets" (ej. entran 8 en el camión)
   const seleccionarPrimerosNPallets = () => {
     const n = Number(cantidadRapidaPallets);
     if (!n || n <= 0) {
@@ -243,7 +356,6 @@ export default function PantallaExpedicion() {
     setPalletsSeleccionados(nuevaSeleccion);
   };
 
-  // Totales en vivo de lo seleccionado para subir al camión
   const idsSeleccionados = Object.keys(palletsSeleccionados);
   const resumenCamion = idsSeleccionados.reduce((acc, id) => {
     const palletObj = stockFisico.find(p => String(p.id) === String(id));
@@ -256,7 +368,6 @@ export default function PantallaExpedicion() {
     return acc;
   }, { pallets: 0, unidades: 0, m2: 0 });
 
-  // Ejecutar el despacho de todos los pallets tildados
   const ejecutarDespachoMultiple = async (e) => {
     e.preventDefault();
     if (resumenCamion.pallets === 0) {
@@ -319,8 +430,8 @@ export default function PantallaExpedicion() {
     String(p.producto_descripcion || '').toLowerCase().includes(busqueda.toLowerCase())
   );
 
-  // Lista de órdenes únicas en galpón para el selector rápido en Despacho
   const ordenesUnicasEnGalpon = Array.from(new Set(stockFisico.map(p => p.numero_orden)));
+  const cantidadOrdenesMarcadasImportar = Object.keys(ordenesSeleccionadasImportar).length;
 
   return (
     <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
@@ -412,7 +523,6 @@ export default function PantallaExpedicion() {
                                 .map(s => s.trim())
                                 .filter(Boolean);
 
-                              // Detectar la cantidad máxima para resaltar en amarillo los parciales (menor cantidad)
                               const cantidades = items.map(item => {
                                 const match = item.match(/\((\d+)/);
                                 return match ? parseInt(match[1], 10) : 0;
@@ -450,7 +560,6 @@ export default function PantallaExpedicion() {
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                           <button 
                             onClick={() => {
-                              // 🎯 Al tocar Despachar en la fila, filtra automáticamente esta orden en la pestaña de despacho
                               setFiltroOrdenDespacho(String(p.numero_orden));
                               setPalletsSeleccionados({});
                               setPestanaActiva('despacho');
@@ -494,7 +603,7 @@ export default function PantallaExpedicion() {
         </div>
       )}
 
-      {/* CONTENIDO 3: REGISTRAR DESPACHO (CON FILTRO DE PEDIDO Y CHECKBOXES PARA CAMIÓN) */}
+      {/* CONTENIDO 3: REGISTRAR DESPACHO */}
       {pestanaActiva === 'despacho' && (
         <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', maxWidth: '1000px', margin: '0 auto', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
           <h3 style={{ color: '#343a40', marginTop: 0 }}>🚚 Consola de Carga de Camión (Selección Múltiple de Pallets)</h3>
@@ -502,7 +611,6 @@ export default function PantallaExpedicion() {
             Filtra por el pedido a despachar, tilda los pallets que suben al camión (ej. 8 pallets) y registra la salida en un solo paso.
           </p>
 
-          {/* BARRA DE FILTRO DE ORDEN + SELECCIÓN RÁPIDA DE N PALLETS */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '8px', border: '1px solid #dee2e6', marginBottom: '1.5rem' }}>
             <div>
               <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px', color: '#0d6efd' }}>
@@ -570,7 +678,6 @@ export default function PantallaExpedicion() {
             </div>
           </div>
 
-          {/* TABLA DE PALLETS FÍSICOS CON CHECKBOXES */}
           <div style={{ maxHeight: '380px', overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '8px', marginBottom: '1.5rem' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e9ecef', zIndex: 1 }}>
@@ -671,7 +778,6 @@ export default function PantallaExpedicion() {
             </table>
           </div>
 
-          {/* RESUMEN DE CARGA Y FORMULARIO FINAL */}
           <form onSubmit={ejecutarDespachoMultiple} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <div style={{
               display: 'flex',
@@ -776,48 +882,214 @@ export default function PantallaExpedicion() {
         </div>
       )}
 
-      {/* MODAL IMPORTAR DESDE PRODUCCIÓN */}
+      {/* =========================================================================
+          📥 MODAL IMPORTAR MÚLTIPLES ÓRDENES DESDE PRODUCCIÓN (CON CHECKBOXES)
+         ========================================================================= */}
       {mostrarModalImportar && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', width: '90%', maxWidth: '650px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <h3 style={{ marginTop: 0, color: '#0d6efd' }}>📥 Traer Orden desde Producción</h3>
-            <p style={{ color: '#666', fontSize: '0.9rem' }}>Selecciona una orden para desglosarla automáticamente en pallets físicos (completos y parciales).</p>
+          <div style={{ backgroundColor: 'white', padding: '1.8rem', borderRadius: '10px', width: '95%', maxWidth: '920px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, color: '#0d6efd' }}>📥 Traer Órdenes desde Producción (Ingreso Masivo)</h3>
+              <button onClick={() => setMostrarModalImportar(false)} style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#6c757d' }}>✖</button>
+            </div>
+            <p style={{ color: '#666', fontSize: '0.9rem', marginTop: 0, marginBottom: '1rem' }}>
+              Tildá una, varias o todas las órdenes terminadas en planta para ingresarlas y desglosarlas en pallets físicos en un solo paso.
+            </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', margin: '1.5rem 0' }}>
-              <label style={{ fontWeight: 'bold' }}>Órdenes Registradas en Planta:</label>
-              <select onChange={(e) => {
-                const idx = e.target.value;
-                const encontrada = idx !== '' ? ordenesProducidas[Number(idx)] : null;
-                setOrdenSeleccionadaImportar(encontrada);
-                if (encontrada) {
-                  setCantidadAImportar(encontrada.cantidad_fabricada || encontrada.cantidad_producida || encontrada.unidades_producidas || encontrada.cantidad_programada || encontrada.cantidad || '');
-                } else {
-                  setCantidadAImportar('');
-                }
-              }} style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }}>
-                <option value="">-- Seleccione una Orden --</option>
-                {ordenesProducidas.map((ord, index) => {
-                  const numOrd = ord.numero_orden || ord.orden || ord.id_orden || index + 1;
-                  const desc = ord.descripcion_producto || ord.producto_descripcion || ord.descripcion || ord.producto || '';
-                  const cantFab = ord.cantidad_fabricada || ord.cantidad_producida || ord.unidades_producidas || 0;
-                  return (
-                    <option key={index} value={index}>
-                      Orden #{numOrd} | {ord.cliente} | {desc} [{ord.estado || 'S/E'}] (Fab: {cantFab})
-                    </option>
-                  );
-                })}
-              </select>
+            {/* BARRA SUPERIOR: BUSCADOR + CAPACIDAD ESTÁNDAR GLOBAL */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center', backgroundColor: '#f8f9fa', padding: '12px', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+              <div style={{ flex: 1, minWidth: '240px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#495057', display: 'block', marginBottom: '4px' }}>Buscar Orden / Cliente / Producto:</label>
+                <input
+                  type="text"
+                  placeholder="🔍 Filtrar lista de órdenes..."
+                  value={filtroModalImportar}
+                  onChange={(e) => setFiltroModalImportar(e.target.value)}
+                  style={estiloInput()}
+                />
+              </div>
 
-              <label style={{ fontWeight: 'bold' }}>Cantidad Total a Ingresar:</label>
-              <input type="number" value={cantidadAImportar} onChange={(e) => setCantidadAImportar(e.target.value)} placeholder="Ej: 4800" style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }} />
+              <div style={{ width: '210px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#0d6efd', display: 'block', marginBottom: '4px' }}>Capacidad Estándar x Pallet:</label>
+                <input
+                  type="number"
+                  value={capacidadGlobalImportar}
+                  onChange={(e) => aplicarCapacidadGlobalATodas(e.target.value)}
+                  placeholder="Ej: 1000"
+                  style={{ ...estiloInput(), fontWeight: 'bold' }}
+                />
+              </div>
 
-              <label style={{ fontWeight: 'bold' }}>Capacidad Estándar por Pallet (Unidades):</label>
-              <input type="number" value={capacidadImportar} onChange={(e) => setCapacidadImportar(e.target.value)} placeholder="Ej: 1000" style={{ padding: '10px', fontSize: '1rem', borderRadius: '5px', border: '1px solid #ccc' }} />
+              <div style={{ display: 'flex', gap: '8px', marginTop: '18px' }}>
+                <button
+                  type="button"
+                  onClick={seleccionarTodasOrdenesImportar}
+                  style={{ padding: '9px 14px', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.85rem' }}
+                >
+                  ☑️ Seleccionar Nuevas
+                </button>
+                {cantidadOrdenesMarcadasImportar > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOrdenesSeleccionadasImportar({})}
+                    style={{ padding: '9px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '0.85rem' }}
+                  >
+                    Limpiar ({cantidadOrdenesMarcadasImportar})
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '1.5rem' }}>
-              <button type="button" onClick={() => setMostrarModalImportar(false)} style={{ padding: '10px 15px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>Cancelar</button>
-              <button type="button" onClick={confirmarImportacionProduccion} style={{ padding: '10px 20px', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' }}>📥 Ingresar y Desglosar Pallets</button>
+            {/* TABLA SCROLLEABLE CON CHECKBOXES */}
+            <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '8px', maxHeight: '420px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                <thead style={{ position: 'sticky', top: 0, backgroundColor: '#e9ecef', zIndex: 1 }}>
+                  <tr>
+                    <th style={{ padding: '10px', textAlign: 'center', width: '45px' }}>
+                      <input
+                        type="checkbox"
+                        onChange={seleccionarTodasOrdenesImportar}
+                        checked={
+                          ordenesProducidasFiltradas.length > 0 &&
+                          ordenesProducidasFiltradas.every((ord, idx) => ordenesSeleccionadasImportar[String(obtenerNumeroOrden(ord, idx))] !== undefined)
+                        }
+                        style={{ transform: 'scale(1.3)', cursor: 'pointer' }}
+                        title="Seleccionar / Desmarcar todas"
+                      />
+                    </th>
+                    <th style={{ padding: '10px' }}>Orden</th>
+                    <th style={{ padding: '10px' }}>Cliente / Producto</th>
+                    <th style={{ padding: '10px', textAlign: 'center' }}>Estado</th>
+                    <th style={{ padding: '10px', textAlign: 'center', width: '140px' }}>Total Cajas</th>
+                    <th style={{ padding: '10px', textAlign: 'center', width: '130px' }}>Cajas x Pallet</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ordenesProducidasFiltradas.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '2rem', color: '#6c757d' }}>
+                        No se encontraron órdenes producidas para este filtro.
+                      </td>
+                    </tr>
+                  ) : (
+                    ordenesProducidasFiltradas.map((ord, idx) => {
+                      const numOrd = String(obtenerNumeroOrden(ord, idx));
+                      const desc = ord.descripcion_producto || ord.producto_descripcion || ord.descripcion || ord.producto || '';
+                      const cantFab = Number(ord.cantidad_fabricada || ord.cantidad_producida || ord.unidades_producidas || 0);
+                      const cantSugerida = obtenerCantidadSugerida(ord);
+                      const yaEnGalpon = stockGalpon.some(s => String(s.numero_orden) === numOrd);
+                      const itemSeleccionado = ordenesSeleccionadasImportar[numOrd];
+                      const estaMarcada = itemSeleccionado !== undefined;
+
+                      return (
+                        <tr
+                          key={numOrd}
+                          onClick={() => toggleSeleccionOrdenImportar(ord, idx)}
+                          style={{
+                            borderBottom: '1px solid #dee2e6',
+                            backgroundColor: estaMarcada ? '#e7f1ff' : (yaEnGalpon ? '#fcfcfc' : 'white'),
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={estaMarcada}
+                              onChange={() => toggleSeleccionOrdenImportar(ord, idx)}
+                              style={{ transform: 'scale(1.3)', cursor: 'pointer' }}
+                            />
+                          </td>
+                          <td style={{ padding: '10px', fontWeight: 'bold', color: '#0d6efd' }}>
+                            #{numOrd}
+                            {yaEnGalpon && (
+                              <div style={{ fontSize: '0.7rem', color: '#856404', backgroundColor: '#fff3cd', padding: '2px 5px', borderRadius: '4px', display: 'inline-block', marginLeft: '6px' }}>
+                                ⚠️ En galpón
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px' }}>
+                            <strong>{ord.cliente}</strong>
+                            <div style={{ fontSize: '0.8rem', color: '#555' }}>{desc}</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <span style={{ padding: '3px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', backgroundColor: '#d1e7dd', color: '#0f5132' }}>
+                              {ord.estado || 'Finalizada'}
+                            </span>
+                            <div style={{ fontSize: '0.72rem', color: '#6c757d', marginTop: '3px' }}>
+                              {cantFab > 0 ? `Fab: ${cantFab} u.` : `Prog: ${cantSugerida} u.`}
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            {estaMarcada ? (
+                              <input
+                                type="number"
+                                min="1"
+                                value={itemSeleccionado.cantidad}
+                                onChange={(e) => cambiarDatoOrdenSeleccionada(numOrd, 'cantidad', e.target.value)}
+                                style={{ width: '105px', padding: '6px', textAlign: 'center', fontWeight: 'bold', borderRadius: '4px', border: '2px solid #0d6efd' }}
+                              />
+                            ) : (
+                              <span style={{ fontWeight: 'bold', color: '#495057' }}>{cantSugerida} u.</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            {estaMarcada ? (
+                              <input
+                                type="number"
+                                min="1"
+                                value={itemSeleccionado.capacidad}
+                                onChange={(e) => cambiarDatoOrdenSeleccionada(numOrd, 'capacidad', e.target.value)}
+                                style={{ width: '95px', padding: '6px', textAlign: 'center', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #0d6efd' }}
+                              />
+                            ) : (
+                              <span style={{ color: '#6c757d', fontSize: '0.82rem' }}>{capacidadGlobalImportar} u.</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* PIE DEL MODAL CON BOTÓN DE IMPORTACIÓN MASIVA */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.2rem', paddingTop: '1rem', borderTop: '1px solid #dee2e6', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ fontWeight: 'bold', color: '#0d6efd' }}>
+                {cantidadOrdenesMarcadasImportar === 0
+                  ? 'Ninguna orden seleccionada'
+                  : `✅ ${cantidadOrdenesMarcadasImportar} orden(es) lista(s) para desglosar en galpón`}
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalImportar(false)}
+                  style={{ padding: '10px 16px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={procesandoImportacion || cantidadOrdenesMarcadasImportar === 0}
+                  onClick={confirmarImportacionProduccion}
+                  style={{
+                    padding: '10px 22px',
+                    backgroundColor: cantidadOrdenesMarcadasImportar === 0 ? '#adb5bd' : '#198754',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    fontWeight: 'bold',
+                    cursor: cantidadOrdenesMarcadasImportar === 0 ? 'not-allowed' : 'pointer',
+                    fontSize: '0.95rem'
+                  }}
+                >
+                  {procesandoImportacion
+                    ? '⏳ Importando órdenes...'
+                    : `📥 Ingresar y Desglosar (${cantidadOrdenesMarcadasImportar})`}
+                </button>
+              </div>
             </div>
           </div>
         </div>
