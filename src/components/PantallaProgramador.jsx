@@ -84,13 +84,11 @@ export default function PantallaProgramador() {
     const limpia = ruta.trim().toUpperCase();
     const partes = limpia.split('-');
 
-    // Si empieza con COR (o CORX4) y tiene segunda parte (ej: COR-JS-DYF, COR-WARX2-PBO, CORX4-WAR-PEGX4)
     if (partes[0].startsWith('COR') && partes.length >= 2) {
       const maquinaBase = partes[1].replace(/X\d+$/i, '');
       return `COR-${maquinaBase}`;
     }
 
-    // Rutas directas sin prefijo COR- (DIV, ESQ, FOC1, FOC2, IMP, MAC, MAQ3, REB)
     return partes[0];
   };
 
@@ -138,7 +136,6 @@ export default function PantallaProgramador() {
           .replace(/[\u0300-\u036f]/g, '')
           .trim();
 
-      // Detector de cabeceras de colores tanto para Productos como para Pedidos
       const detectarColumnasColor = (cols) => {
         const colsColores = [];
         cols.forEach((h, idx) => {
@@ -218,16 +215,13 @@ export default function PantallaProgramador() {
         return isNaN(n) ? null : n;
       };
 
-      // Función inteligente que extrae hasta 6 colores de la fila del CSV
       const extraerColoresDeFila = (cols) => {
         let encontrados = [];
 
-        // 1. Por cabeceras explícitas de color/tinta
         if (indicesCols.colsColores && indicesCols.colsColores.length > 0) {
           indicesCols.colsColores.forEach(idx => {
             const val = String(cols[idx] || '').replace(/"/g, '').trim();
             if (val && val !== '-' && val !== '0' && val.toUpperCase() !== 'NO' && val.toUpperCase() !== 'NULL') {
-              // Si una sola celda trae varios separados por coma o barra
               val.split(/[,;/]/).forEach(sub => {
                 const limpio = sub.trim();
                 if (limpio) encontrados.push(limpio);
@@ -236,7 +230,6 @@ export default function PantallaProgramador() {
           });
         }
 
-        // 2. Respaldo por patrón de código de tinta (GCMI, PU, CYAN, MAGENTA, NEGRO, etc.) en cualquier columna
         if (encontrados.length === 0) {
           const patronTinta = /^(GCMI\s*\d+|PU\s*\d+|NEGRO.*|NEG\s+.*|MAGENTA|CYAN.*|AMA\s+PROC|BARNIZ|VIOLETA|VER\s+LIM|CEL\s+LED|GRIS\s+.*|AZUL\s+.*|COOL\s+GRAY.*)/i;
           cols.forEach((celda, idx) => {
@@ -344,7 +337,6 @@ export default function PantallaProgramador() {
             ...infoColores
           });
 
-          // Si el pedido tiene código de producto, también alimentamos maestro_productos automáticamente
           if (codProd && codProd !== 'SIN_CODIGO') {
             productosDesdePedidosMap.set(codProd, {
               codigo_producto: codProd,
@@ -360,7 +352,6 @@ export default function PantallaProgramador() {
       }
 
       try {
-        // Si extrajimos fichas de productos/colores desde el CSV de pedidos, las sincronizamos en segundo plano
         if (productosDesdePedidosMap.size > 0) {
           await apiFetch('/api/productos/sincronizar', {
             method: 'POST',
@@ -465,16 +456,27 @@ export default function PantallaProgramador() {
     }
   };
 
-  // ⚡ ATAJO RÁPIDO PARA MANDAR CUALQUIER ORDEN AL PUESTO 1 AL INSTANTE
-  const forzarAlPrimerPuesto = async (pedidoSeleccionado) => {
-    const resto = pedidos.filter(p => p.id !== pedidoSeleccionado.id);
-    const nuevaLista = [pedidoSeleccionado, ...resto];
-    
-    setPedidos(nuevaLista);
+  // ⚡ CAMBIAR DE PUESTO ESCRIBIENDO EL NÚMERO DIRECTAMENTE (1, 2, 3...)
+  const cambiarPosicionManual = async (indexActual, nuevoPuestoTexto) => {
+    const nuevoPuesto = parseInt(nuevoPuestoTexto, 10);
+    if (isNaN(nuevoPuesto)) return;
 
-    const payload = nuevaLista.map((item, index) => ({
+    const destIndex = Math.max(0, Math.min(nuevoPuesto - 1, pedidosFiltrados.length - 1));
+    if (indexActual === destIndex) return;
+
+    const itemsFiltrados = Array.from(pedidosFiltrados);
+    const [movido] = itemsFiltrados.splice(indexActual, 1);
+    itemsFiltrados.splice(destIndex, 0, movido);
+
+    const idsFiltradosSet = new Set(pedidosFiltrados.map(p => p.id));
+    const restoPedidos = pedidos.filter(p => !idsFiltradosSet.has(p.id));
+    
+    const nuevaListaGlobal = [...itemsFiltrados, ...restoPedidos];
+    setPedidos(nuevaListaGlobal);
+
+    const payload = nuevaListaGlobal.map((item, idx) => ({
       id: item.id,
-      prioridad: index + 1
+      prioridad: idx + 1
     }));
 
     try {
@@ -484,7 +486,7 @@ export default function PantallaProgramador() {
         body: JSON.stringify({ nuevoOrden: payload })
       });
     } catch (error) {
-      console.error("Error al forzar prioridad", error);
+      console.error("Error al cambiar posición manualmente", error);
     }
   };
 
@@ -522,7 +524,7 @@ export default function PantallaProgramador() {
 
       <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: '5px solid #ffc107' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-          <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá para reordenar)</h3>
+          <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)</h3>
           
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Ruta:</span>
@@ -564,7 +566,7 @@ export default function PantallaProgramador() {
                 >
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                     <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>N° Orden</th>
+                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Puesto / N° Orden</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Producto</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
@@ -598,17 +600,47 @@ export default function PantallaProgramador() {
                                 ...provided.draggableProps.style
                               }}
                             >
-                              <td style={{ padding: '15px 10px', fontWeight: 'bold' }}>
-                                <span style={{ cursor: 'grab', marginRight: '10px', color: '#aaa' }}>☰</span>
-                                {pedido.id}
-                                {index !== 0 && (
-                                  <button 
-                                    onClick={() => forzarAlPrimerPuesto(pedido)}
-                                    style={{ marginLeft: '10px', padding: '2px 6px', fontSize: '0.65rem', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                                    title="Mandar al primer puesto de la cola">
-                                    ⬆️ Puesto 1
-                                  </button>
-                                )}
+                              <td style={{ padding: '12px 10px', fontWeight: 'bold' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ cursor: 'grab', color: '#aaa', fontSize: '1.1rem' }} title="Arrastrar fila">☰</span>
+                                  
+                                  <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '5px', padding: '2px 5px' }} title="Escribí el puesto deseado y presioná Enter">
+                                    <span style={{ fontSize: '0.75rem', color: '#856404', marginRight: '2px', fontWeight: 'bold' }}>#</span>
+                                    <input
+                                      key={`pos-${pedido.id}-${index}`}
+                                      type="number"
+                                      min="1"
+                                      max={pedidosFiltrados.length}
+                                      defaultValue={index + 1}
+                                      onFocus={(e) => e.target.select()}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.target.blur();
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        if (parseInt(e.target.value, 10) !== index + 1) {
+                                          cambiarPosicionManual(index, e.target.value);
+                                        } else {
+                                          e.target.value = index + 1;
+                                        }
+                                      }}
+                                      style={{
+                                        width: '42px',
+                                        textAlign: 'center',
+                                        fontWeight: 'bold',
+                                        fontSize: '0.85rem',
+                                        border: 'none',
+                                        backgroundColor: 'transparent',
+                                        color: '#212529',
+                                        outline: 'none'
+                                      }}
+                                    />
+                                  </div>
+
+                                  <span style={{ fontSize: '1rem', color: '#333' }}>{pedido.id}</span>
+                                </div>
                               </td>
                               <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
                               <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
