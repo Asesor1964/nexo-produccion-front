@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
+import { apiFetch } from '../services/api';
 
 export default function PantallaProgramador() {
   const [pedidos, setPedidos] = useState([]);
@@ -12,23 +12,17 @@ export default function PantallaProgramador() {
       const respuesta = await apiFetch('/api/pedidos');
       if (respuesta.ok) {
         const data = await respuesta.json();
-        
-        // 🎯 ESTADOS QUE YA NO DEBEN APARECER EN LA COLA ACTIVA
-        const ESTADOS_OCULTOS = ['FINALIZADA', 'CERRADO POR ACUERDO', 'CUMPLIDA', 'COMPLETADA'];
-
         const pedidosFormateados = data
-          .filter(p => {
-            const est = (p.estado || 'Pendiente').trim().toUpperCase();
-            return !ESTADOS_OCULTOS.includes(est); // Deja pasar 'Pendiente', 'Habilitada', 'En Proceso' y 'Finalizada Parcial'
-          })
           .map(p => ({
             id: p.id,
             cliente: p.cliente || 'Sin cliente',
             producto: p.descripcion_producto || p.producto_descripcion || 'Sin descripción',
             estado: p.estado || 'Pendiente',
             maquina: p.maquina_asignada || 'COR-JS',
-            prioridad: p.prioridad_secuencia || 999, 
-            cantidad_faltante: p.cantidad_faltante || 0
+            prioridad: p.prioridad_secuencia || 999,
+            cantidad_programada: Number(p.cantidad_programada) || 0,
+            cantidad_fabricada: Number(p.cantidad_fabricada) || 0,
+            cantidad_faltante: Number(p.cantidad_faltante) || 0
           }))
           .sort((a, b) => a.prioridad - b.prioridad);
           
@@ -42,6 +36,33 @@ export default function PantallaProgramador() {
   useEffect(() => {
     cargarPedidosDesdeBD();
   }, []);
+
+  // 🚑 RESCATAR / REVIVIR ORDEN CERRADA EN CERO O POR ERROR
+  const revivirOrden = async (pedido) => {
+    const confirmar = window.confirm(
+      `🚑 ¿Desea REVIVIR la orden #${pedido.id} (${pedido.cliente})?\n\n` +
+      `• Se retirará de Expedición.\n` +
+      `• Volverá a estado "Pendiente" (con contador en 0) para que pueda enviarla nuevamente a ${pedido.maquina}.`
+    );
+    if (!confirmar) return;
+
+    try {
+      const respuesta = await apiFetch(`/api/pedidos/${pedido.id}/revivir`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resetear_cantidades: true })
+      });
+
+      if (respuesta.ok) {
+        alert(`✅ Orden #${pedido.id} revivida con éxito. Ya está como "Pendiente" lista para Enviar a Planta.`);
+        cargarPedidosDesdeBD();
+      } else {
+        alert('❌ Error al intentar revivir la orden.');
+      }
+    } catch (error) {
+      console.error('Error de conexión al revivir orden:', error);
+    }
+  };
 
   // 🎯 GESTIÓN DE DECISIÓN COMERCIAL SOBRE EL SALDO FALTANTE
   const gestionarFaltante = async (pedido, decision) => {
@@ -86,21 +107,6 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 1. FUNCIÓN PARA AGRUPAR CUALQUIER RUTA EN SU FAMILIA BASE
-  const obtenerFamiliaRuta = (ruta) => {
-    if (!ruta) return '';
-    const limpia = ruta.trim().toUpperCase();
-    const partes = limpia.split('-');
-
-    if (partes[0].startsWith('COR') && partes.length >= 2) {
-      const maquinaBase = partes[1].replace(/X\d+$/i, '');
-      return `COR-${maquinaBase}`;
-    }
-
-    return partes[0];
-  };
-
-  // 🎯 2. EXTRAER RUTAS EXACTAS ÚNICAS (Para el desplegable <select> de cada orden)
   const rutasUnicasPlanta = Array.from(
     new Set(
       pedidos
@@ -108,19 +114,6 @@ export default function PantallaProgramador() {
         .filter(m => m && isNaN(m) && !m.includes(','))
     )
   ).sort();
-
-  // 🎯 3. EXTRAER FAMILIAS DE RUTA Y CONTAR ÓRDENES (Para los botones de Filtro Ruta)
-  const conteoPorFamilia = {};
-  pedidos.forEach(p => {
-    const raw = p.maquina ? p.maquina.trim().toUpperCase() : '';
-    if (raw && isNaN(raw) && !raw.includes(',')) {
-      const fam = obtenerFamiliaRuta(raw);
-      if (fam) {
-        conteoPorFamilia[fam] = (conteoPorFamilia[fam] || 0) + 1;
-      }
-    }
-  });
-  const familiasUnicasPlanta = Object.keys(conteoPorFamilia).sort();
 
   const procesarCSV = (e) => {
     e.preventDefault();
@@ -429,30 +422,6 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 DAR POR CUMPLIDA MANUALMENTE UNA ORDEN HABILITADA (O DE PRUEBA) Y QUITARLA DE LA COLA
-  const darPorCumplida = async (pedido) => {
-    const confirmar = window.confirm(`¿Confirmás que la orden #${pedido.id} (${pedido.cliente}) ya fue fabricada/cumplida? Se quitará de la cola activa.`);
-    if (!confirmar) return;
-
-    setPedidos(prev => prev.filter(p => p.id !== pedido.id));
-
-    try {
-      const respuesta = await apiFetch(`/api/pedidos/${pedido.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: 'Finalizada' }),
-      });
-      if (!respuesta.ok) {
-        alert('❌ Error al actualizar el estado en la BD.');
-        cargarPedidosDesdeBD();
-      }
-    } catch (error) {
-      console.error('Error al dar por cumplida la orden:', error);
-      cargarPedidosDesdeBD();
-    }
-  };
-
-  // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros de familia activos)
   const handleDragEnd = async (resultado) => {
     if (!resultado.destination) return;
 
@@ -487,27 +456,15 @@ export default function PantallaProgramador() {
     }
   };
 
-  // ⚡ CAMBIAR DE PUESTO ESCRIBIENDO EL NÚMERO DIRECTAMENTE (1, 2, 3...)
-  const cambiarPosicionManual = async (indexActual, nuevoPuestoTexto) => {
-    const nuevoPuesto = parseInt(nuevoPuestoTexto, 10);
-    if (isNaN(nuevoPuesto)) return;
-
-    const destIndex = Math.max(0, Math.min(nuevoPuesto - 1, pedidosFiltrados.length - 1));
-    if (indexActual === destIndex) return;
-
-    const itemsFiltrados = Array.from(pedidosFiltrados);
-    const [movido] = itemsFiltrados.splice(indexActual, 1);
-    itemsFiltrados.splice(destIndex, 0, movido);
-
-    const idsFiltradosSet = new Set(pedidosFiltrados.map(p => p.id));
-    const restoPedidos = pedidos.filter(p => !idsFiltradosSet.has(p.id));
+  const forzarAlPrimerPuesto = async (pedidoSeleccionado) => {
+    const resto = pedidos.filter(p => p.id !== pedidoSeleccionado.id);
+    const nuevaLista = [pedidoSeleccionado, ...resto];
     
-    const nuevaListaGlobal = [...itemsFiltrados, ...restoPedidos];
-    setPedidos(nuevaListaGlobal);
+    setPedidos(nuevaLista);
 
-    const payload = nuevaListaGlobal.map((item, idx) => ({
+    const payload = nuevaLista.map((item, index) => ({
       id: item.id,
-      prioridad: idx + 1
+      prioridad: index + 1
     }));
 
     try {
@@ -517,14 +474,13 @@ export default function PantallaProgramador() {
         body: JSON.stringify({ nuevoOrden: payload })
       });
     } catch (error) {
-      console.error("Error al cambiar posición manualmente", error);
+      console.error("Error al forzar prioridad", error);
     }
   };
 
-  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA
   const pedidosFiltrados = pedidos.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
-    return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
+    return p.maquina && p.maquina.trim().toUpperCase() === filtroMaquina.trim().toUpperCase();
   });
 
   return (
@@ -555,7 +511,7 @@ export default function PantallaProgramador() {
 
       <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: '5px solid #ffc107' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-          <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)</h3>
+          <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá para reordenar)</h3>
           
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Ruta:</span>
@@ -569,17 +525,17 @@ export default function PantallaProgramador() {
               }}>
               Todas ({pedidos.length})
             </button>
-            {familiasUnicasPlanta.map((familia) => (
+            {rutasUnicasPlanta.map((ruta) => (
               <button 
-                key={familia}
-                onClick={() => setFiltroMaquina(familia)}
+                key={ruta}
+                onClick={() => setFiltroMaquina(ruta)}
                 style={{ 
                   padding: '6px 14px', borderRadius: '5px', border: '1px solid #ccc', 
-                  backgroundColor: filtroMaquina === familia ? '#17a2b8' : '#f8f9fa', 
-                  color: filtroMaquina === familia ? 'white' : '#333', 
+                  backgroundColor: filtroMaquina === ruta ? '#17a2b8' : '#f8f9fa', 
+                  color: filtroMaquina === ruta ? 'white' : '#333', 
                   cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' 
                 }}>
-                {familia} ({conteoPorFamilia[familia]})
+                {ruta}
               </button>
             ))}
           </div>
@@ -597,7 +553,7 @@ export default function PantallaProgramador() {
                 >
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                     <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Puesto / N° Orden</th>
+                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>N° Orden</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Producto</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
@@ -614,168 +570,150 @@ export default function PantallaProgramador() {
                         </td>
                       </tr>
                     ) : (
-                      pedidosFiltrados.map((pedido, index) => (
-                        <Draggable 
-                          key={pedido.id.toString()} 
-                          draggableId={pedido.id.toString()} 
-                          index={index}
-                        >
-                          {(provided, snapshot) => (
-                            <tr
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              style={{ 
-                                borderBottom: '1px solid #dee2e6',
-                                backgroundColor: snapshot.isDragging ? '#e3f2fd' : 'white',
-                                ...provided.draggableProps.style
-                              }}
-                            >
-                              <td style={{ padding: '12px 10px', fontWeight: 'bold' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <span style={{ cursor: 'grab', color: '#aaa', fontSize: '1.1rem' }} title="Arrastrar fila">☰</span>
-                                  
-                                  <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '5px', padding: '2px 5px' }} title="Escribí el puesto deseado y presioná Enter">
-                                    <span style={{ fontSize: '0.75rem', color: '#856404', marginRight: '2px', fontWeight: 'bold' }}>#</span>
-                                    <input
-                                      key={`pos-${pedido.id}-${index}`}
-                                      type="number"
-                                      min="1"
-                                      max={pedidosFiltrados.length}
-                                      defaultValue={index + 1}
-                                      onFocus={(e) => e.target.select()}
-                                      onClick={(e) => e.stopPropagation()}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          e.target.blur();
-                                        }
-                                      }}
-                                      onBlur={(e) => {
-                                        if (parseInt(e.target.value, 10) !== index + 1) {
-                                          cambiarPosicionManual(index, e.target.value);
-                                        } else {
-                                          e.target.value = index + 1;
-                                        }
-                                      }}
-                                      style={{
-                                        width: '42px',
-                                        textAlign: 'center',
-                                        fontWeight: 'bold',
-                                        fontSize: '0.85rem',
-                                        border: 'none',
-                                        backgroundColor: 'transparent',
-                                        color: '#212529',
-                                        outline: 'none'
-                                      }}
-                                    />
-                                  </div>
+                      pedidosFiltrados.map((pedido, index) => {
+                        const esCerrada = ['Finalizada', 'Finalizada Parcial', 'Cerrado por Acuerdo', 'Cerrada'].includes(pedido.estado);
+                        const cerradaEnCero = esCerrada && pedido.cantidad_fabricada <= 0;
 
-                                  <span style={{ fontSize: '1rem', color: '#333' }}>{pedido.id}</span>
-                                </div>
-                              </td>
-                              <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
-                              <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
-                              
-                              <td style={{ padding: '15px 10px', textAlign: 'center', backgroundColor: '#fdfdfe' }}>
-                                <select 
-                                  value={pedido.maquina}
-                                  onChange={(e) => cambiarMaquina(pedido.id, e.target.value)}
-                                  style={{ 
-                                    padding: '8px', borderRadius: '5px', border: '2px solid #ccc', 
-                                    fontSize: '0.9rem', fontWeight: 'bold', color: pedido.maquina ? '#0056b3' : '#dc3545',
-                                    outline: 'none', cursor: 'pointer'
-                                  }}
-                                >
-                                  <option value="" disabled>-- Asignar Ruta --</option>
-                                  {rutasUnicasPlanta.map((ruta) => (
-                                    <option key={ruta} value={ruta}>
-                                      {ruta}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                              
-                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                                <span style={{ 
-                                  padding: '6px 12px', borderRadius: '20px', 
-                                  backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
-                                  color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
-                                  fontWeight: 'bold', fontSize: '0.85rem'
-                                }}>
-                                  {pedido.estado}
-                                </span>
+                        return (
+                          <Draggable 
+                            key={pedido.id.toString()} 
+                            draggableId={pedido.id.toString()} 
+                            index={index}
+                          >
+                            {(provided, snapshot) => (
+                              <tr
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                style={{ 
+                                  borderBottom: '1px solid #dee2e6',
+                                  backgroundColor: snapshot.isDragging ? '#e3f2fd' : (cerradaEnCero ? '#fff8e6' : 'white'),
+                                  ...provided.draggableProps.style
+                                }}
+                              >
+                                <td style={{ padding: '15px 10px', fontWeight: 'bold' }}>
+                                  <span style={{ cursor: 'grab', marginRight: '10px', color: '#aaa' }}>☰</span>
+                                  {pedido.id}
+                                  {index !== 0 && (
+                                    <button 
+                                      onClick={() => forzarAlPrimerPuesto(pedido)}
+                                      style={{ marginLeft: '10px', padding: '2px 6px', fontSize: '0.65rem', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                      title="Mandar al primer puesto de la cola">
+                                      ⬆️ Puesto 1
+                                    </button>
+                                  )}
+                                </td>
+                                <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
+                                <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
+                                
+                                <td style={{ padding: '15px 10px', textAlign: 'center', backgroundColor: '#fdfdfe' }}>
+                                  <select 
+                                    value={pedido.maquina}
+                                    onChange={(e) => cambiarMaquina(pedido.id, e.target.value)}
+                                    style={{ 
+                                      padding: '8px', borderRadius: '5px', border: '2px solid #ccc', 
+                                      fontSize: '0.9rem', fontWeight: 'bold', color: pedido.maquina ? '#0056b3' : '#dc3545',
+                                      outline: 'none', cursor: 'pointer'
+                                    }}
+                                  >
+                                    <option value="" disabled>-- Asignar Ruta --</option>
+                                    {rutasUnicasPlanta.map((ruta) => (
+                                      <option key={ruta} value={ruta}>
+                                        {ruta}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                
+                                <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                  <span style={{ 
+                                    padding: '6px 12px', borderRadius: '20px', 
+                                    backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
+                                    color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
+                                    fontWeight: 'bold', fontSize: '0.85rem'
+                                  }}>
+                                    {pedido.estado}
+                                  </span>
 
-                                {pedido.estado === 'Finalizada Parcial' && (
-                                  <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
-                                    <span style={{ 
-                                      backgroundColor: '#dc3545', 
-                                      color: 'white', 
-                                      padding: '4px 8px', 
-                                      borderRadius: '4px', 
-                                      fontWeight: 'bold', 
-                                      fontSize: '0.75rem',
-                                      display: 'inline-block',
-                                      marginBottom: '6px'
-                                    }}>
-                                      ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
-                                    </span>
+                                  {cerradaEnCero && (
+                                    <div style={{ marginTop: '6px' }}>
+                                      <span style={{ backgroundColor: '#fd7e14', color: '#fff', padding: '3px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold' }}>
+                                        ⚠️ CERRADA EN 0 CAJAS
+                                      </span>
+                                    </div>
+                                  )}
 
-                                    <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                                      <button 
-                                        onClick={() => gestionarFaltante(pedido, 'reprogramar')}
-                                        style={{ padding: '4px 8px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
-                                        title="Generar nueva orden o sumar a cola por el saldo pendiente">
-                                        🔄 Reprogramar
-                                      </button>
+                                  {pedido.estado === 'Finalizada Parcial' && !cerradaEnCero && (
+                                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
+                                      <span style={{ 
+                                        backgroundColor: '#dc3545', 
+                                        color: 'white', 
+                                        padding: '4px 8px', 
+                                        borderRadius: '4px', 
+                                        fontWeight: 'bold', 
+                                        fontSize: '0.75rem',
+                                        display: 'inline-block',
+                                        marginBottom: '6px'
+                                      }}>
+                                        ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
+                                      </span>
 
-                                      <button 
-                                        onClick={() => gestionarFaltante(pedido, 'cerrar')}
-                                        style={{ padding: '4px 8px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
-                                        title="Cerrar definitivamente por acuerdo comercial con el cliente">
-                                        📁 Archivar / Cerrar
+                                      <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                        <button 
+                                          onClick={() => gestionarFaltante(pedido, 'reprogramar')}
+                                          style={{ padding: '4px 8px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                          title="Generar nueva orden o sumar a cola por el saldo pendiente">
+                                          🔄 Reprogramar
+                                        </button>
+
+                                        <button 
+                                          onClick={() => gestionarFaltante(pedido, 'cerrar')}
+                                          style={{ padding: '4px 8px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                          title="Cerrar definitivamente por acuerdo comercial con el cliente">
+                                          📁 Archivar / Cerrar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </td>
+                                
+                                <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                  {pedido.estado === 'Pendiente' ? (
+                                    <button 
+                                      onClick={() => habilitarOrden(pedido.id)}
+                                      style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                                      Enviar a Planta
+                                    </button>
+                                  ) : esCerrada ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                      <button
+                                        onClick={() => revivirOrden(pedido)}
+                                        style={{
+                                          padding: '6px 12px',
+                                          backgroundColor: cerradaEnCero ? '#fd7e14' : '#17a2b8',
+                                          color: '#fff',
+                                          border: 'none',
+                                          borderRadius: '5px',
+                                          cursor: 'pointer',
+                                          fontWeight: 'bold',
+                                          fontSize: '0.78rem'
+                                        }}
+                                        title="Sacar de Expedición y devolver a estado Pendiente"
+                                      >
+                                        🚑 Revivir Orden
                                       </button>
                                     </div>
-                                  </div>
-                                )}
-                              </td>
-                              
-                              <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                                {pedido.estado === 'Pendiente' ? (
-                                  <button 
-                                    onClick={() => habilitarOrden(pedido.id)}
-                                    style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                                    Enviar a Planta
-                                  </button>
-                                ) : pedido.estado === 'Finalizada Parcial' ? (
-                                  <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '1.2rem' }} title="Atender decisión comercial en columna Estado">
-                                    ⚡
-                                  </span>
-                                ) : (
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                    <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.1rem' }} title="En planta">✓</span>
-                                    <button
-                                      onClick={() => darPorCumplida(pedido)}
-                                      style={{
-                                        padding: '5px 10px',
-                                        backgroundColor: '#198754',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        fontWeight: 'bold',
-                                        fontSize: '0.75rem'
-                                      }}
-                                      title="Marcar como ya fabricada y quitar de la cola"
-                                    >
-                                      ✅ Cumplida
-                                    </button>
-                                  </div>
-                                )}
-                              </td>
-                            </tr>
-                          )}
-                        </Draggable>
-                      ))
+                                  ) : (
+                                    <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }} title="En cola de máquina">
+                                      ✓
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Draggable>
+                        );
+                      })
                     )}
                     {provided.placeholder}
                   </tbody>
