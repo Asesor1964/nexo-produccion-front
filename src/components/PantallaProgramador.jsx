@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { apiFetch } from '../services/api';
+import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
 export default function PantallaProgramador() {
   const [pedidos, setPedidos] = useState([]);
+  const [pedidosOcultos, setPedidosOcultos] = useState([]); // 📦 Guarda las cerradas para poder revivirlas si hace falta
+  const [mostrarCerradas, setMostrarCerradas] = useState(false); // 🚑 Interruptor para ver/rescatar órdenes cerradas
   const [archivo, setArchivo] = useState(null);
   const [filtroMaquina, setFiltroMaquina] = useState('TODAS');
 
@@ -12,21 +14,40 @@ export default function PantallaProgramador() {
       const respuesta = await apiFetch('/api/pedidos');
       if (respuesta.ok) {
         const data = await respuesta.json();
-        const pedidosFormateados = data
-          .map(p => ({
-            id: p.id,
-            cliente: p.cliente || 'Sin cliente',
-            producto: p.descripcion_producto || p.producto_descripcion || 'Sin descripción',
-            estado: p.estado || 'Pendiente',
-            maquina: p.maquina_asignada || 'COR-JS',
-            prioridad: p.prioridad_secuencia || 999,
-            cantidad_programada: Number(p.cantidad_programada) || 0,
-            cantidad_fabricada: Number(p.cantidad_fabricada) || 0,
-            cantidad_faltante: Number(p.cantidad_faltante) || 0
-          }))
-          .sort((a, b) => a.prioridad - b.prioridad);
-          
-        setPedidos(pedidosFormateados);
+        
+        // 🎯 ESTADOS QUE YA NO DEBEN APARECER EN LA COLA ACTIVA
+        const ESTADOS_OCULTOS = ['FINALIZADA', 'CERRADO POR ACUERDO', 'CUMPLIDA', 'COMPLETADA', 'CERRADA'];
+
+        const formatear = (p) => ({
+          id: p.id,
+          cliente: p.cliente || 'Sin cliente',
+          producto: p.descripcion_producto || p.producto_descripcion || 'Sin descripción',
+          estado: p.estado || 'Pendiente',
+          maquina: p.maquina_asignada || 'COR-JS',
+          prioridad: p.prioridad_secuencia || 999,
+          cantidad_programada: Number(p.cantidad_programada) || 0,
+          cantidad_fabricada: Number(p.cantidad_fabricada) || 0,
+          cantidad_faltante: Number(p.cantidad_faltante) || 0
+        });
+
+        const activos = [];
+        const cerrados = [];
+
+        data.forEach(p => {
+          const item = formatear(p);
+          const est = item.estado.trim().toUpperCase();
+          if (ESTADOS_OCULTOS.includes(est)) {
+            cerrados.push(item);
+          } else {
+            activos.push(item);
+          }
+        });
+
+        activos.sort((a, b) => a.prioridad - b.prioridad);
+        cerrados.sort((a, b) => b.id - a.id);
+
+        setPedidos(activos);
+        setPedidosOcultos(cerrados);
       }
     } catch (error) {
       console.error('Error al cargar la BD:', error);
@@ -42,7 +63,7 @@ export default function PantallaProgramador() {
     const confirmar = window.confirm(
       `🚑 ¿Desea REVIVIR la orden #${pedido.id} (${pedido.cliente})?\n\n` +
       `• Se retirará de Expedición.\n` +
-      `• Volverá a estado "Pendiente" (con contador en 0) para que pueda enviarla nuevamente a ${pedido.maquina}.`
+      `• Volverá a la cola activa como "Pendiente" (contador en 0) para enviarla nuevamente a ${pedido.maquina}.`
     );
     if (!confirmar) return;
 
@@ -54,7 +75,7 @@ export default function PantallaProgramador() {
       });
 
       if (respuesta.ok) {
-        alert(`✅ Orden #${pedido.id} revivida con éxito. Ya está como "Pendiente" lista para Enviar a Planta.`);
+        alert(`✅ Orden #${pedido.id} revivida con éxito y devuelta a la cola activa.`);
         cargarPedidosDesdeBD();
       } else {
         alert('❌ Error al intentar revivir la orden.');
@@ -107,13 +128,44 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 1. FUNCIÓN PARA AGRUPAR CUALQUIER RUTA EN SU FAMILIA BASE
+  const obtenerFamiliaRuta = (ruta) => {
+    if (!ruta) return '';
+    const limpia = ruta.trim().toUpperCase();
+    const partes = limpia.split('-');
+
+    if (partes[0].startsWith('COR') && partes.length >= 2) {
+      const maquinaBase = partes[1].replace(/X\d+$/i, '');
+      return `COR-${maquinaBase}`;
+    }
+
+    return partes[0];
+  };
+
+  // Lista base según estemos viendo la cola activa o la papelera de cerradas para revivir
+  const listaBase = mostrarCerradas ? pedidosOcultos : pedidos;
+
+  // 🎯 2. EXTRAER RUTAS EXACTAS ÚNICAS (Para el desplegable <select> de cada orden)
   const rutasUnicasPlanta = Array.from(
     new Set(
-      pedidos
+      [...pedidos, ...pedidosOcultos]
         .map(p => p.maquina ? p.maquina.trim().toUpperCase() : '')
         .filter(m => m && isNaN(m) && !m.includes(','))
     )
   ).sort();
+
+  // 🎯 3. EXTRAER FAMILIAS DE RUTA Y CONTAR ÓRDENES (Para los botones de Filtro Ruta)
+  const conteoPorFamilia = {};
+  listaBase.forEach(p => {
+    const raw = p.maquina ? p.maquina.trim().toUpperCase() : '';
+    if (raw && isNaN(raw) && !raw.includes(',')) {
+      const fam = obtenerFamiliaRuta(raw);
+      if (fam) {
+        conteoPorFamilia[fam] = (conteoPorFamilia[fam] || 0) + 1;
+      }
+    }
+  });
+  const familiasUnicasPlanta = Object.keys(conteoPorFamilia).sort();
 
   const procesarCSV = (e) => {
     e.preventDefault();
@@ -384,8 +436,9 @@ export default function PantallaProgramador() {
   };
 
   const cambiarMaquina = async (id, nuevaMaquina) => {
-    const nuevosPedidos = pedidos.map(p => p.id === id ? { ...p, maquina: nuevaMaquina } : p);
-    setPedidos(nuevosPedidos);
+    const actualizarLista = (lista) => lista.map(p => p.id === id ? { ...p, maquina: nuevaMaquina } : p);
+    setPedidos(actualizarLista);
+    setPedidosOcultos(actualizarLista);
 
     try {
       await apiFetch(`/api/pedidos/${id}`, {
@@ -422,8 +475,32 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 DAR POR CUMPLIDA MANUALMENTE UNA ORDEN HABILITADA (O DE PRUEBA) Y QUITARLA DE LA COLA
+  const darPorCumplida = async (pedido) => {
+    const confirmar = window.confirm(`¿Confirmás que la orden #${pedido.id} (${pedido.cliente}) ya fue fabricada/cumplida? Se quitará de la cola activa.`);
+    if (!confirmar) return;
+
+    setPedidos(prev => prev.filter(p => p.id !== pedido.id));
+
+    try {
+      const respuesta = await apiFetch(`/api/pedidos/${pedido.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'Finalizada' }),
+      });
+      if (!respuesta.ok) {
+        alert('❌ Error al actualizar el estado en la BD.');
+      }
+      cargarPedidosDesdeBD();
+    } catch (error) {
+      console.error('Error al dar por cumplida la orden:', error);
+      cargarPedidosDesdeBD();
+    }
+  };
+
+  // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros de familia activos)
   const handleDragEnd = async (resultado) => {
-    if (!resultado.destination) return;
+    if (mostrarCerradas || !resultado.destination) return;
 
     const sourceIndex = resultado.source.index;
     const destIndex = resultado.destination.index;
@@ -456,15 +533,28 @@ export default function PantallaProgramador() {
     }
   };
 
-  const forzarAlPrimerPuesto = async (pedidoSeleccionado) => {
-    const resto = pedidos.filter(p => p.id !== pedidoSeleccionado.id);
-    const nuevaLista = [pedidoSeleccionado, ...resto];
-    
-    setPedidos(nuevaLista);
+  // ⚡ CAMBIAR DE PUESTO ESCRIBIENDO EL NÚMERO DIRECTAMENTE (1, 2, 3...)
+  const cambiarPosicionManual = async (indexActual, nuevoPuestoTexto) => {
+    if (mostrarCerradas) return;
+    const nuevoPuesto = parseInt(nuevoPuestoTexto, 10);
+    if (isNaN(nuevoPuesto)) return;
 
-    const payload = nuevaLista.map((item, index) => ({
+    const destIndex = Math.max(0, Math.min(nuevoPuesto - 1, pedidosFiltrados.length - 1));
+    if (indexActual === destIndex) return;
+
+    const itemsFiltrados = Array.from(pedidosFiltrados);
+    const [movido] = itemsFiltrados.splice(indexActual, 1);
+    itemsFiltrados.splice(destIndex, 0, movido);
+
+    const idsFiltradosSet = new Set(pedidosFiltrados.map(p => p.id));
+    const restoPedidos = pedidos.filter(p => !idsFiltradosSet.has(p.id));
+    
+    const nuevaListaGlobal = [...itemsFiltrados, ...restoPedidos];
+    setPedidos(nuevaListaGlobal);
+
+    const payload = nuevaListaGlobal.map((item, idx) => ({
       id: item.id,
-      prioridad: index + 1
+      prioridad: idx + 1
     }));
 
     try {
@@ -474,14 +564,17 @@ export default function PantallaProgramador() {
         body: JSON.stringify({ nuevoOrden: payload })
       });
     } catch (error) {
-      console.error("Error al forzar prioridad", error);
+      console.error("Error al cambiar posición manualmente", error);
     }
   };
 
-  const pedidosFiltrados = pedidos.filter(p => {
+  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA
+  const pedidosFiltrados = listaBase.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
-    return p.maquina && p.maquina.trim().toUpperCase() === filtroMaquina.trim().toUpperCase();
+    return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
   });
+
+  const cantidadCerradasEnCero = pedidosOcultos.filter(p => p.cantidad_fabricada <= 0).length;
 
   return (
     <div style={{ padding: '2rem', width: '100%', maxWidth: '1100px', fontFamily: 'sans-serif' }}>
@@ -509,9 +602,35 @@ export default function PantallaProgramador() {
         </form>
       </div>
 
-      <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: '5px solid #ffc107' }}>
+      <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: mostrarCerradas ? '5px solid #fd7e14' : '5px solid #ffc107' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-          <h3 style={{ margin: 0, color: '#343a40' }}>2. Órdenes de Producción en Cola (Arrastrá para reordenar)</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0, color: '#343a40' }}>
+              {mostrarCerradas
+                ? '🚑 Órdenes Cerradas / En Expedición (Modo Rescate)'
+                : '2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)'}
+            </h3>
+
+            {/* Botón para alternar entre la Cola Activa y las Órdenes Cerradas (para revivir) */}
+            <button
+              onClick={() => setMostrarCerradas(!mostrarCerradas)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '6px',
+                border: mostrarCerradas ? '2px solid #343a40' : '1px solid #fd7e14',
+                backgroundColor: mostrarCerradas ? '#343a40' : (cantidadCerradasEnCero > 0 ? '#fff3cd' : '#f8f9fa'),
+                color: mostrarCerradas ? '#fff' : '#d9480f',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontSize: '0.82rem'
+              }}
+              title="Ver órdenes finalizadas o cerradas en cero para revivirlas y devolverlas a la cola"
+            >
+              {mostrarCerradas
+                ? '⬅️ Volver a Cola Activa'
+                : `🚑 Ver Cerradas / Revivir (${pedidosOcultos.length}${cantidadCerradasEnCero > 0 ? ` · ⚠️ ${cantidadCerradasEnCero} en 0` : ''})`}
+            </button>
+          </div>
           
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Ruta:</span>
@@ -523,19 +642,19 @@ export default function PantallaProgramador() {
                 color: filtroMaquina === 'TODAS' ? 'white' : '#333', 
                 cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' 
               }}>
-              Todas ({pedidos.length})
+              Todas ({listaBase.length})
             </button>
-            {rutasUnicasPlanta.map((ruta) => (
+            {familiasUnicasPlanta.map((familia) => (
               <button 
-                key={ruta}
-                onClick={() => setFiltroMaquina(ruta)}
+                key={familia}
+                onClick={() => setFiltroMaquina(familia)}
                 style={{ 
                   padding: '6px 14px', borderRadius: '5px', border: '1px solid #ccc', 
-                  backgroundColor: filtroMaquina === ruta ? '#17a2b8' : '#f8f9fa', 
-                  color: filtroMaquina === ruta ? 'white' : '#333', 
+                  backgroundColor: filtroMaquina === familia ? '#17a2b8' : '#f8f9fa', 
+                  color: filtroMaquina === familia ? 'white' : '#333', 
                   cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' 
                 }}>
-                {ruta}
+                {familia} ({conteoPorFamilia[familia]})
               </button>
             ))}
           </div>
@@ -553,7 +672,7 @@ export default function PantallaProgramador() {
                 >
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                     <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>N° Orden</th>
+                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Puesto / N° Orden</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente</th>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Producto</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
@@ -571,14 +690,14 @@ export default function PantallaProgramador() {
                       </tr>
                     ) : (
                       pedidosFiltrados.map((pedido, index) => {
-                        const esCerrada = ['Finalizada', 'Finalizada Parcial', 'Cerrado por Acuerdo', 'Cerrada'].includes(pedido.estado);
-                        const cerradaEnCero = esCerrada && pedido.cantidad_fabricada <= 0;
+                        const cerradaEnCero = mostrarCerradas && pedido.cantidad_fabricada <= 0;
 
                         return (
                           <Draggable 
                             key={pedido.id.toString()} 
                             draggableId={pedido.id.toString()} 
                             index={index}
+                            isDragDisabled={mostrarCerradas}
                           >
                             {(provided, snapshot) => (
                               <tr
@@ -591,17 +710,51 @@ export default function PantallaProgramador() {
                                   ...provided.draggableProps.style
                                 }}
                               >
-                                <td style={{ padding: '15px 10px', fontWeight: 'bold' }}>
-                                  <span style={{ cursor: 'grab', marginRight: '10px', color: '#aaa' }}>☰</span>
-                                  {pedido.id}
-                                  {index !== 0 && (
-                                    <button 
-                                      onClick={() => forzarAlPrimerPuesto(pedido)}
-                                      style={{ marginLeft: '10px', padding: '2px 6px', fontSize: '0.65rem', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                                      title="Mandar al primer puesto de la cola">
-                                      ⬆️ Puesto 1
-                                    </button>
-                                  )}
+                                <td style={{ padding: '12px 10px', fontWeight: 'bold' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {!mostrarCerradas && (
+                                      <>
+                                        <span style={{ cursor: 'grab', color: '#aaa', fontSize: '1.1rem' }} title="Arrastrar fila">☰</span>
+                                        
+                                        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '5px', padding: '2px 5px' }} title="Escribí el puesto deseado y presioná Enter">
+                                          <span style={{ fontSize: '0.75rem', color: '#856404', marginRight: '2px', fontWeight: 'bold' }}>#</span>
+                                          <input
+                                            key={`pos-${pedido.id}-${index}`}
+                                            type="number"
+                                            min="1"
+                                            max={pedidosFiltrados.length}
+                                            defaultValue={index + 1}
+                                            onFocus={(e) => e.target.select()}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.target.blur();
+                                              }
+                                            }}
+                                            onBlur={(e) => {
+                                              if (parseInt(e.target.value, 10) !== index + 1) {
+                                                cambiarPosicionManual(index, e.target.value);
+                                              } else {
+                                                e.target.value = index + 1;
+                                              }
+                                            }}
+                                            style={{
+                                              width: '42px',
+                                              textAlign: 'center',
+                                              fontWeight: 'bold',
+                                              fontSize: '0.85rem',
+                                              border: 'none',
+                                              backgroundColor: 'transparent',
+                                              color: '#212529',
+                                              outline: 'none'
+                                            }}
+                                          />
+                                        </div>
+                                      </>
+                                    )}
+
+                                    <span style={{ fontSize: '1rem', color: '#333' }}>{pedido.id}</span>
+                                  </div>
                                 </td>
                                 <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
                                 <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
@@ -635,15 +788,15 @@ export default function PantallaProgramador() {
                                     {pedido.estado}
                                   </span>
 
-                                  {cerradaEnCero && (
-                                    <div style={{ marginTop: '6px' }}>
-                                      <span style={{ backgroundColor: '#fd7e14', color: '#fff', padding: '3px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold' }}>
-                                        ⚠️ CERRADA EN 0 CAJAS
-                                      </span>
+                                  {mostrarCerradas && (
+                                    <div style={{ marginTop: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: cerradaEnCero ? '#d9480f' : '#495057' }}>
+                                      {cerradaEnCero
+                                        ? '⚠️ CERRADA EN 0 CAJAS (Prueba / Sin procesar)'
+                                        : `Fabricadas: ${pedido.cantidad_fabricada} / ${pedido.cantidad_programada} caj.`}
                                     </div>
                                   )}
 
-                                  {pedido.estado === 'Finalizada Parcial' && !cerradaEnCero && (
+                                  {pedido.estado === 'Finalizada Parcial' && !mostrarCerradas && (
                                     <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
                                       <span style={{ 
                                         backgroundColor: '#dc3545', 
@@ -678,35 +831,53 @@ export default function PantallaProgramador() {
                                 </td>
                                 
                                 <td style={{ padding: '15px 10px', textAlign: 'center' }}>
-                                  {pedido.estado === 'Pendiente' ? (
+                                  {mostrarCerradas ? (
+                                    <button
+                                      onClick={() => revivirOrden(pedido)}
+                                      style={{
+                                        padding: '7px 14px',
+                                        backgroundColor: cerradaEnCero ? '#fd7e14' : '#17a2b8',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '5px',
+                                        cursor: 'pointer',
+                                        fontWeight: 'bold',
+                                        fontSize: '0.82rem'
+                                      }}
+                                      title="Sacar de Expedición y devolver a la cola activa como Pendiente"
+                                    >
+                                      🚑 Revivir a Cola
+                                    </button>
+                                  ) : pedido.estado === 'Pendiente' ? (
                                     <button 
                                       onClick={() => habilitarOrden(pedido.id)}
                                       style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
                                       Enviar a Planta
                                     </button>
-                                  ) : esCerrada ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                  ) : pedido.estado === 'Finalizada Parcial' ? (
+                                    <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '1.2rem' }} title="Atender decisión comercial en columna Estado">
+                                      ⚡
+                                    </span>
+                                  ) : (
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                      <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.1rem' }} title="En planta">✓</span>
                                       <button
-                                        onClick={() => revivirOrden(pedido)}
+                                        onClick={() => darPorCumplida(pedido)}
                                         style={{
-                                          padding: '6px 12px',
-                                          backgroundColor: cerradaEnCero ? '#fd7e14' : '#17a2b8',
-                                          color: '#fff',
+                                          padding: '5px 10px',
+                                          backgroundColor: '#198754',
+                                          color: 'white',
                                           border: 'none',
-                                          borderRadius: '5px',
+                                          borderRadius: '4px',
                                           cursor: 'pointer',
                                           fontWeight: 'bold',
-                                          fontSize: '0.78rem'
+                                          fontSize: '0.75rem'
                                         }}
-                                        title="Sacar de Expedición y devolver a estado Pendiente"
+                                        title="Marcar como ya fabricada y quitar de la cola"
                                       >
-                                        🚑 Revivir Orden
+                                        ✅ Cumplida
                                       </button>
                                     </div>
-                                  ) : (
-                                    <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.2rem' }} title="En cola de máquina">
-                                      ✓
-                                    </span>
                                   )}
                                 </td>
                               </tr>
