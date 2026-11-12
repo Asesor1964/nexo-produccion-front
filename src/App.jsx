@@ -7,7 +7,8 @@ import PantallaEficiencia from './components/PantallaEficiencia';
 import PantallaConfiguracion from './components/PantallaConfiguracion';
 import PantallaMonitorTV from './components/PantallaMonitorTV';
 import PantallaDesarrollador from './components/PantallaDesarrollador';
-import PantallaExpedicion from './components/PantallaExpedicion'; // 👈 1. IMPORTACIÓN AGREGADA
+import PantallaExpedicion from './components/PantallaExpedicion';
+import PantallaCargaManual from './components/PantallaCargaManual'; // 👈 NUEVA CONSOLA DE PARTES FÍSICOS
 
 export default function App() {
   const [usuarioActual, setUsuarioActual] = useState(null);
@@ -48,7 +49,7 @@ export default function App() {
       } else if (rolUser === 'monitor') {
         setRolActivo('monitor');
       } else if (rolUser === 'expedicion') {
-        setRolActivo('expedicion'); // 👈 Redirección directa si es de expedición
+        setRolActivo('expedicion');
       }
     }} />;
   }
@@ -62,16 +63,16 @@ export default function App() {
       return true;
     }
     if (rolUsuarioNormalizado.includes('programador')) {
-      return ['programador', 'jefe', 'configuracion', 'monitor', 'maquinista', 'expedicion'].includes(modulo);
+      return ['programador', 'jefe', 'carga-manual', 'configuracion', 'monitor', 'maquinista', 'expedicion'].includes(modulo);
     }
     if (rolUsuarioNormalizado.includes('jefe')) {
-      return ['jefe', 'eficiencia', 'programador', 'maquinista', 'configuracion', 'monitor', 'expedicion'].includes(modulo);
+      return ['jefe', 'carga-manual', 'eficiencia', 'programador', 'maquinista', 'configuracion', 'monitor', 'expedicion'].includes(modulo);
     }
     if (rolUsuarioNormalizado.includes('expedicion')) {
-      return ['expedicion', 'monitor'].includes(modulo); // 👈 Permisos específicos de expedición
+      return ['expedicion', 'monitor'].includes(modulo);
     }
     if (rolUsuarioNormalizado.includes('eficiencia')) {
-      return ['eficiencia', 'jefe', 'monitor'].includes(modulo);
+      return ['eficiencia', 'jefe', 'carga-manual', 'monitor'].includes(modulo);
     }
     if (rolUsuarioNormalizado.includes('configuración') || rolUsuarioNormalizado.includes('configuracion') || rolUsuarioNormalizado.includes('abm')) {
       return ['configuracion', 'monitor', 'programador'].includes(modulo);
@@ -122,6 +123,14 @@ export default function App() {
               onClick={() => setRolActivo('jefe')}
               style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#ffc107', color: 'black', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
               📊 Jefe de Producción
+            </button>
+          )}
+
+          {tienePermiso('carga-manual') && (
+            <button 
+              onClick={() => setRolActivo('carga-manual')}
+              style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
+              📋 Carga Manual de Partes
             </button>
           )}
 
@@ -199,11 +208,12 @@ export default function App() {
         {rolActivo === 'maquinista' && <PantallaMaquinista />}
         {rolActivo === 'programador' && <PantallaProgramador />}
         {rolActivo === 'jefe' && <PantallaHistorial />} 
+        {rolActivo === 'carga-manual' && <PantallaCargaManual />} {/* 👈 NUEVA PANTALLA EXCLUSIVA */}
         {rolActivo === 'eficiencia' && <PantallaEficiencia />}
         {rolActivo === 'desarrollador' && <PantallaDesarrollador />}
         {rolActivo === 'configuracion' && <PantallaConfiguracion />}
         {rolActivo === 'monitor' && <PantallaMonitorTV />}
-        {rolActivo === 'expedicion' && <PantallaExpedicion />} {/* 👈 Renderizado de la nueva pantalla */}
+        {rolActivo === 'expedicion' && <PantallaExpedicion />}
       </div>
 
     </div>
