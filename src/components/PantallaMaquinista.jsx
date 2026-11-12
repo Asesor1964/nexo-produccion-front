@@ -4,9 +4,9 @@ import ModalScrap from './ModalScrap';
 import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
 const STORAGE_KEY = 'nexo_estado_maquinista_v1';
+const TURNOS_HISTORIAL_KEY = 'nexo_historial_turnos_v1';
 
 // Respaldo completo de las 64 incidencias oficiales (Tipos_Incidencias.csv) + Set-Up
-// 👈 Exportado para reutilizarlo en el modal de Editar Tiempo Muerto de Auditoría
 export const INCIDENCIAS_RESPALDO = [
   "00 - Set-Up Inicial",
   "01- Cambio de Orden",
@@ -130,6 +130,17 @@ export default function PantallaMaquinista() {
   const [operadorSeleccionado, setOperadorSeleccionado] = useState(estadoGuardado?.operadorSeleccionado || '');
   const [colaPedidos, setColaPedidos] = useState([]); 
   
+  // ⏱️ ESTADOS DE TURNO REAL DE MÁQUINA (APERTURA Y CIERRE DE HORAS OPERATIVAS)
+  const [turnoActivo, setTurnoActivo] = useState(estadoGuardado?.turnoActivo || null);
+  const [segundosTurno, setSegundosTurno] = useState(() => {
+    if (estadoGuardado?.turnoActivo?.inicioMs) {
+      return Math.max(0, Math.floor((Date.now() - estadoGuardado.turnoActivo.inicioMs) / 1000));
+    }
+    return 0;
+  });
+  const [mostrarModalFinTurno, setMostrarModalFinTurno] = useState(false);
+  const [cajasAvanceRelevo, setCajasAvanceRelevo] = useState('');
+
   const [ordenActiva, setOrdenActiva] = useState(estadoGuardado?.ordenActiva || null);
   const [enSetup, setEnSetup] = useState(estadoGuardado?.enSetup || false);
   const [produccionActiva, setProduccionActiva] = useState(estadoGuardado?.produccionActiva || false);
@@ -148,7 +159,6 @@ export default function PantallaMaquinista() {
     return 0;
   });
 
-  // Referencia para enviar siempre los segundos en vivo sin reiniciar el intervalo de latido
   const segundosRef = useRef(segundosTranscurridos);
   useEffect(() => {
     segundosRef.current = segundosTranscurridos;
@@ -181,6 +191,7 @@ export default function PantallaMaquinista() {
     const estadoParaGuardar = {
       maquinaSeleccionada,
       operadorSeleccionado,
+      turnoActivo,
       ordenActiva,
       enSetup,
       produccionActiva,
@@ -202,6 +213,7 @@ export default function PantallaMaquinista() {
   }, [
     maquinaSeleccionada,
     operadorSeleccionado,
+    turnoActivo,
     ordenActiva,
     enSetup,
     produccionActiva,
@@ -219,6 +231,19 @@ export default function PantallaMaquinista() {
     verificacion,
     inspeccionPaquetes
   ]);
+
+  // Cronómetro del Turno Activo
+  useEffect(() => {
+    if (!turnoActivo?.inicioMs) {
+      setSegundosTurno(0);
+      return;
+    }
+    setSegundosTurno(Math.max(0, Math.floor((Date.now() - turnoActivo.inicioMs) / 1000)));
+    const intTurno = setInterval(() => {
+      setSegundosTurno(Math.max(0, Math.floor((Date.now() - turnoActivo.inicioMs) / 1000)));
+    }, 1000);
+    return () => clearInterval(intTurno);
+  }, [turnoActivo]);
 
   useEffect(() => {
     const cargarMaestros = async () => {
@@ -238,7 +263,7 @@ export default function PantallaMaquinista() {
               const desc = (item.descripcion || '').trim();
               const cod = (item.codigo || '').trim();
               if (/^\d+/.test(desc)) return desc;
-              return cod ? `${cod}- ${desc}` : desc;
+              return cod ? `${cod} - ${desc}` : desc;
             }).filter(Boolean);
 
             if (formateadas.length > 0) {
@@ -307,6 +332,7 @@ export default function PantallaMaquinista() {
             'en preparación', 
             'en produccion', 
             'en producción', 
+            'en proceso',
             'pausada',
             'finalizada parcial',
             'parcial'
@@ -328,7 +354,7 @@ export default function PantallaMaquinista() {
     return () => clearInterval(intervaloCola);
   }, [maquinaSeleccionada]);
 
-  // 🛰️ FUNCIÓN CORREGIDA: Ahora recibe segundosFaseVal y lo envía en segundos_fase
+  // 🛰️ SINCRONIZACIÓN CON MONITOR TV EN VIVO
   const notificarEstadoEnVivo = async (
     estadoNuevo,
     velocidadVal = 0,
@@ -354,12 +380,11 @@ export default function PantallaMaquinista() {
     }
   };
 
-  // 🛰️ LATIDO BLINDADO: Sincroniza el estado y los segundos en vivo cada 2 segundos con el Monitor TV
   useEffect(() => {
     if (!maquinaSeleccionada) return;
 
     const enviarLatido = () => {
-      let estadoActual = 'ESPERA';
+      let estadoActual = turnoActivo ? 'ESPERA' : 'INACTIVA';
       let velActual = 0;
       
       const segsReales = (enSetup || produccionActiva) && inicioFaseMs
@@ -387,6 +412,7 @@ export default function PantallaMaquinista() {
   }, [
     maquinaSeleccionada,
     operadorSeleccionado,
+    turnoActivo,
     enSetup,
     produccionActiva,
     mostrarModalParada,
@@ -396,7 +422,7 @@ export default function PantallaMaquinista() {
     inicioFaseMs
   ]);
 
-  // ⏱️ CRONÓMETRO DE FASE (Alta precisión basada en milisegundos reales)
+  // ⏱️ CRONÓMETRO DE FASE
   useEffect(() => {
     let intervalo = null;
     if ((enSetup || produccionActiva) && inicioFaseMs) {
@@ -417,13 +443,224 @@ export default function PantallaMaquinista() {
     return `${horas.toString().padStart(2, '0')}:${minutos.toString().padStart(2, '0')}:${segundos.toString().padStart(2, '0')}`;
   };
 
+  // =========================================================================
+  // 🟢 LÓGICA DE APERTURA Y CIERRE DE TURNO REAL + RELEVO DE ORDEN EN CURSO
+  // =========================================================================
+  const detectarEtiquetaTurno = () => {
+    const hora = new Date().getHours();
+    if (hora >= 6 && hora < 14) return 'Turno Mañana (06 a 14 hs)';
+    if (hora >= 14 && hora < 22) return 'Turno Tarde (14 a 22 hs)';
+    return 'Turno Noche (22 a 06 hs)';
+  };
+
+  const iniciarTurnoMaquina = async () => {
+    if (!maquinaSeleccionada || !operadorSeleccionado) {
+      alert('⚠️ Selecciona primero tu Nombre y la Máquina.');
+      return;
+    }
+
+    const ahora = new Date();
+    const horaStr = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const fechaISO = ahora.toISOString();
+
+    const nuevoTurno = {
+      id_local: Date.now(),
+      id_bd: null,
+      maquina: maquinaSeleccionada,
+      operador: operadorSeleccionado,
+      etiqueta_turno: detectarEtiquetaTurno(),
+      fecha_inicio: fechaISO,
+      hora_inicio: horaStr,
+      inicioMs: Date.now()
+    };
+
+    try {
+      const res = await apiFetch('/api/pedidos/turnos/iniciar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          maquina: maquinaSeleccionada,
+          operador: operadorSeleccionado,
+          etiqueta_turno: nuevoTurno.etiqueta_turno,
+          hora_inicio: horaStr,
+          fecha_inicio: fechaISO
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.id) nuevoTurno.id_bd = data.id;
+      }
+    } catch (err) {
+      console.warn('Guardando inicio de turno en modo local:', err);
+    }
+
+    setTurnoActivo(nuevoTurno);
+  };
+
+  const abrirConfirmacionFinTurno = () => {
+    if (mostrarModalParada) {
+      alert('⚠️ Tienes la ventana de Registrar Parada abierta. Guarda o cancela la parada antes de cerrar tu turno.');
+      return;
+    }
+    setCajasAvanceRelevo(String(cantidadFabricada || 0));
+    setMostrarModalFinTurno(true);
+  };
+
+  const confirmarCierreDeTurno = async (modoRelevo = 'SIN_ORDEN') => {
+    if (!turnoActivo) return;
+
+    const ahora = new Date();
+    const horaFinStr = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const minutosRealesTurno = Math.max(1, Math.round((Date.now() - turnoActivo.inicioMs) / 60000));
+
+    // 1. Si el maquinista estaba en mitad de un Set-Up al terminar su turno, imputamos esos minutos a su turno
+    if (enSetup && ordenActiva) {
+      const minSetupParcial = Math.max(1, Math.floor(segundosTranscurridos / 60));
+      try {
+        await apiFetch('/api/pedidos/tiempos-muertos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            maquina: maquinaSeleccionada,
+            codigo_parada: '00 - Set-Up Inicial (Fin de Turno)',
+            motivo: '00 - Set-Up Inicial (Fin de Turno)',
+            minutos_duracion: minSetupParcial,
+            numero_orden: ordenActiva.numero_orden,
+            operador: operadorSeleccionado
+          })
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // 2. Si tenía una orden en Producción y elige "DEJAR EN MÁQUINA PARA EL RELEVO (14:00 hs)"
+    if (produccionActiva && ordenActiva && modoRelevo === 'RELEVO_CONTINUA') {
+      const cajasDeEsteTurno = Math.max(0, Number(cajasAvanceRelevo) || 0);
+      const acumuladoAnterior = Number(ordenActiva.cantidad_fabricada_previa || ordenActiva.cantidad_fabricada || 0);
+      const nuevoTotalAcumulado = acumuladoAnterior + cajasDeEsteTurno;
+      const descProductoReal = ordenActiva.descripcion_producto || ordenActiva.producto_descripcion || 'Producto';
+
+      try {
+        // Actualizamos la orden con estado "En Producción" para que NO desaparezca de la máquina y guarde el avance
+        await apiFetch(`/api/pedidos/${ordenActiva.numero_orden}/produccion`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cantidad_fabricada: nuevoTotalAcumulado,
+            estado: 'En Producción',
+            paradas: listaParadas,
+            maquina: maquinaSeleccionada,
+            operador: operadorSeleccionado
+          })
+        });
+
+        // Enviamos a Expedición los pallets que fabricó este turno que se retira
+        if (cajasDeEsteTurno > 0) {
+          await apiFetch('/api/expedicion/pallets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              numero_orden: ordenActiva.numero_orden,
+              maquina: maquinaSeleccionada,
+              operador: operadorSeleccionado,
+              cliente: ordenActiva.cliente,
+              producto_descripcion: descProductoReal,
+              cantidad_unidades: cajasDeEsteTurno,
+              capacidad_standard: Math.max(1, Number(capacidadPalletStandard) || 1000)
+            })
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error('Error al guardar avance de relevo:', err);
+      }
+
+      // La orden queda preparada en pantalla con el saldo actualizado para el maquinista que entra a las 14 hs
+      const ordenActualizadaParaRelevo = {
+        ...ordenActiva,
+        estado: 'En Producción',
+        cantidad_fabricada: nuevoTotalAcumulado,
+        cantidad_fabricada_previa: nuevoTotalAcumulado,
+        vieneDeRelevo: true,
+        operadorAnterior: operadorSeleccionado
+      };
+
+      setOrdenActiva(ordenActualizadaParaRelevo);
+      setEnSetup(false);
+      setProduccionActiva(false);
+      setCantidadFabricada(0);
+      setSegundosTranscurridos(0);
+      setInicioFaseMs(null);
+      setListaParadas([]);
+    }
+
+    // 3. Si al cerrar el turno la orden ya se había terminado por completo
+    if (produccionActiva && ordenActiva && modoRelevo === 'FINALIZAR_ORDEN_TOTAL') {
+      const cajasDeEsteTurno = Math.max(0, Number(cajasAvanceRelevo) || 0);
+      const acumuladoAnterior = Number(ordenActiva.cantidad_fabricada_previa || ordenActiva.cantidad_fabricada || 0);
+      const totalFinal = acumuladoAnterior + cajasDeEsteTurno;
+      await cerrarOrdenProduccion('Finalizada', totalFinal, cajasDeEsteTurno);
+    }
+
+    // 4. Registrar el cierre del turno en Backend + Historial Local (para OEE exacto)
+    const registroCerrado = {
+      ...turnoActivo,
+      hora_fin: horaFinStr,
+      fecha_fin: ahora.toISOString(),
+      minutos_totales: minutosRealesTurno,
+      estado: 'CERRADO'
+    };
+
+    try {
+      await apiFetch('/api/pedidos/turnos/finalizar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: turnoActivo.id_bd,
+          maquina: maquinaSeleccionada,
+          operador: operadorSeleccionado,
+          hora_inicio: turnoActivo.hora_inicio,
+          hora_fin: horaFinStr,
+          fecha_inicio: turnoActivo.fecha_inicio,
+          minutos_totales: minutosRealesTurno
+        })
+      });
+    } catch (err) {
+      console.warn('Cierre de turno guardado en almacenamiento local:', err);
+    }
+
+    try {
+      const histPrevio = JSON.parse(localStorage.getItem(TURNOS_HISTORIAL_KEY) || '[]');
+      histPrevio.push(registroCerrado);
+      localStorage.setItem(TURNOS_HISTORIAL_KEY, JSON.stringify(histPrevio));
+    } catch (e) {
+      console.error(e);
+    }
+
+    alert(`🔴 Turno cerrado correctamente.\n👤 Maquinista: ${operadorSeleccionado}\n⚙️ Máquina: ${maquinaSeleccionada}\n⏱️ Tiempo real abierto: ${minutosRealesTurno} min (${(minutosRealesTurno / 60).toFixed(1)} hs)`);
+
+    setTurnoActivo(null);
+    setSegundosTurno(0);
+    setMostrarModalFinTurno(false);
+    setOperadorSeleccionado(''); // Libera el operador para que ingrese el relevo de las 14 hs
+    cargarColaDeTrabajo(maquinaSeleccionada);
+    notificarEstadoEnVivo('INACTIVA', 0, 0, ordenActiva);
+  };
+
+  // =========================================================================
+  // CÁLCULO DE METAS Y TIEMPOS DE COACH
+  // =========================================================================
+  const avancePrevioOrden = Number(ordenActiva?.cantidad_fabricada_previa || ordenActiva?.cantidad_fabricada || 0);
+  const metaRestanteOrden = Math.max(0, Number(ordenActiva?.cantidad_programada || 0) - avancePrevioOrden);
+
   let tiempoObjetivoMinutos = 0;
   let mensajeCoachProd = "";
   let colorCoachProd = "";
 
   if (ordenActiva && produccionActiva) {
     const VELOCIDAD_ESTANDAR = Number(velocidadEstandarMaq) || 120; 
-    tiempoObjetivoMinutos = Math.ceil(ordenActiva.cantidad_programada / VELOCIDAD_ESTANDAR);
+    const cantidadObjetivoTurno = metaRestanteOrden > 0 ? metaRestanteOrden : Number(ordenActiva.cantidad_programada || 0);
+    tiempoObjetivoMinutos = Math.ceil(cantidadObjetivoTurno / VELOCIDAD_ESTANDAR);
     const minutosBrutos = Math.floor(segundosTranscurridos / 60);
     
     const totalMinutosParadosEnProduccion = listaParadas
@@ -434,7 +671,7 @@ export default function PantallaMaquinista() {
     if (minutosNetos < 0) minutosNetos = 0; 
 
     if (minutosNetos < tiempoObjetivoMinutos * 0.7) {
-      mensajeCoachProd = `🔥 ¡Velocidad Pura! Tiempo Neto: ${minutosNetos}m | Ideal: ${tiempoObjetivoMinutos}m.`;
+      mensajeCoachProd = `🔥 ¡Velocidad Pura! Tiempo Neto: ${minutosNetos}m | Ideal para completar: ${tiempoObjetivoMinutos}m.`;
       colorCoachProd = "#28a745"; 
     } else if (minutosNetos <= tiempoObjetivoMinutos) {
       const qRestantes = tiempoObjetivoMinutos - minutosNetos;
@@ -474,7 +711,19 @@ export default function PantallaMaquinista() {
   };
 
   const seleccionarOrdenParaProducir = (pedido) => {
-    setOrdenActiva(pedido);
+    if (!turnoActivo) {
+      alert('⚠️ Primero debes tocar el botón verde "🟢 INICIAR TURNO EN MÁQUINA" para registrar tus horas de trabajo.');
+      return;
+    }
+    const cantYaHecha = Number(pedido.cantidad_fabricada || 0);
+    const est = String(pedido.estado || '').toLowerCase();
+    const esRelevo = cantYaHecha > 0 || est === 'en producción' || est === 'en produccion' || est === 'en proceso';
+
+    setOrdenActiva({
+      ...pedido,
+      cantidad_fabricada_previa: cantYaHecha,
+      vieneDeRelevo: esRelevo
+    });
     setCantidadFabricada(0);
     setVelocidadOperativa(velocidadEstandarMaq);
     limpiarBorradorCIP();
@@ -490,16 +739,36 @@ export default function PantallaMaquinista() {
     setMotivoDemoraSetup('');
     setCantidadFabricada(0);
     limpiarBorradorCIP();
-    notificarEstadoEnVivo('ESPERA', 0, 0, null);
+    notificarEstadoEnVivo(turnoActivo ? 'ESPERA' : 'INACTIVA', 0, 0, null);
   };
 
   const iniciarSetup = () => {
+    if (!turnoActivo) {
+      alert('⚠️ Primero debes iniciar tu turno en el panel superior.');
+      return;
+    }
     const ahora = new Date();
     setHoraInicio(ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     setInicioFaseMs(Date.now());
     setSegundosTranscurridos(0);
     setEnSetup(true); 
     notificarEstadoEnVivo('SETUP', 0, 0);
+  };
+
+  // ⚡ NUEVA FUNCIÓN: CONTINUAR PRODUCCIÓN DIRECTO (PARA EL RELEVO DE LAS 14:00 HS SIN SET-UP FALSO)
+  const continuarProduccionRelevoSinSetup = () => {
+    if (!turnoActivo) {
+      alert('⚠️ Primero debes tocar "🟢 INICIAR TURNO EN MÁQUINA" para comenzar a producir.');
+      return;
+    }
+    const ahora = new Date();
+    const horaActual = ahora.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setHoraInicio(horaActual);
+    setInicioFaseMs(Date.now());
+    setSegundosTranscurridos(0);
+    setEnSetup(false);
+    setProduccionActiva(true);
+    notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, 0);
   };
 
   const finalizarSetup = async () => {
@@ -558,22 +827,21 @@ export default function PantallaMaquinista() {
     notificarEstadoEnVivo('PRODUCIENDO', Number(velocidadOperativa) || velocidadEstandarMaq, 0);
   };
 
-  // Divisor seguro para el cálculo de pallets (evita división por cero si el input está vacío)
   const capPalletSegura = Math.max(1, Number(capacidadPalletStandard) || 1);
 
-  // Función unificada para cierre Total o Parcial
-  const cerrarOrdenProduccion = async (estadoDestino = 'Finalizada') => {
+  // Función unificada para cierre Total o Parcial (Suma lo hecho en el turno anterior si viene de relevo)
+  const cerrarOrdenProduccion = async (estadoDestino = 'Finalizada', totalOverride = null, cajasTurnoOverride = null) => {
     if (!ordenActiva) return;
-    const cantFabReal = Number(cantidadFabricada) || 0;
+    const cajasHechasEnEsteTurno = cajasTurnoOverride !== null ? Number(cajasTurnoOverride) : (Number(cantidadFabricada) || 0);
+    const cantTotalOrden = totalOverride !== null ? Number(totalOverride) : (avancePrevioOrden + cajasHechasEnEsteTurno);
     const descProductoReal = ordenActiva.descripcion_producto || ordenActiva.producto_descripcion || 'Producto';
 
     try {
-      // 1. Actualizar la orden en producción
       const respuesta = await apiFetch(`/api/pedidos/${ordenActiva.numero_orden}/produccion`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          cantidad_fabricada: cantFabReal, 
+          cantidad_fabricada: cantTotalOrden, 
           estado: estadoDestino,
           paradas: listaParadas,
           maquina: maquinaSeleccionada,
@@ -582,8 +850,7 @@ export default function PantallaMaquinista() {
       });
 
       if (respuesta.ok) {
-        // 2. Disparar automáticamente la creación de los pallets en Expedición/Galpón
-        if (cantFabReal > 0) {
+        if (cajasHechasEnEsteTurno > 0) {
           await apiFetch('/api/expedicion/pallets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -593,14 +860,18 @@ export default function PantallaMaquinista() {
               operador: operadorSeleccionado,
               cliente: ordenActiva.cliente,
               producto_descripcion: descProductoReal,
-              cantidad_unidades: cantFabReal,
+              cantidad_unidades: cajasHechasEnEsteTurno,
               capacidad_standard: capPalletSegura
             })
           }).catch(err => console.error("Error al registrar pallet automático:", err));
         }
 
-        alert(`✅ Orden ${ordenActiva.numero_orden} registrada como "${estadoDestino}" y enviada a Expedición.\n👤 Operador: ${operadorSeleccionado}\n📦 Cajas: ${cantFabReal}\n⏱️ Tiempo: ${formatearTiempo(segundosTranscurridos)}`);
-        localStorage.removeItem(STORAGE_KEY);
+        alert(
+          `✅ Orden ${ordenActiva.numero_orden} registrada como "${estadoDestino}".\n` +
+          `👤 Maquinista: ${operadorSeleccionado}\n` +
+          `📦 Fabricadas en este turno: ${cajasHechasEnEsteTurno} u.\n` +
+          `📊 Total acumulado de la orden: ${cantTotalOrden} / ${ordenActiva.cantidad_programada} u.`
+        );
         cancelarOrden();
         cargarColaDeTrabajo(maquinaSeleccionada);
       } else {
@@ -673,11 +944,12 @@ export default function PantallaMaquinista() {
     <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'sans-serif', width: '100%', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>⚙️ Terminal de Operador en Planta</h1>
       
-      <div style={{ marginBottom: '2rem', padding: '1.5rem', backgroundColor: '#f8f9fa', borderRadius: '10px', border: '2px solid #dee2e6', display: 'flex', gap: '2rem', justifyContent: 'center', alignItems: 'center' }}>
+      {/* SELECTOR DE OPERADOR Y MÁQUINA */}
+      <div style={{ marginBottom: '1.2rem', padding: '1.5rem', backgroundColor: '#f8f9fa', borderRadius: '10px', border: '2px solid #dee2e6', display: 'flex', gap: '2rem', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <div>
-          <label style={{ fontSize: '1.2rem', fontWeight: 'bold', marginRight: '10px', color: '#495057' }}>👤 Operador:</label>
+          <label style={{ fontSize: '1.2rem', fontWeight: 'bold', marginRight: '10px', color: '#495057' }}>👤 Maquinista:</label>
           <select 
-            disabled={enSetup || produccionActiva}
+            disabled={!!turnoActivo || enSetup || produccionActiva}
             value={operadorSeleccionado} 
             onChange={(e) => setOperadorSeleccionado(e.target.value)} 
             style={{ padding: '10px', fontSize: '1.2rem', borderRadius: '5px', border: '2px solid #0d6efd' }}
@@ -689,7 +961,7 @@ export default function PantallaMaquinista() {
         <div>
           <label style={{ fontSize: '1.2rem', fontWeight: 'bold', marginRight: '10px', color: '#495057' }}>⚙️ Máquina:</label>
           <select 
-            disabled={enSetup || produccionActiva}
+            disabled={!!turnoActivo || enSetup || produccionActiva}
             value={maquinaSeleccionada} 
             onChange={(e) => setMaquinaSeleccionada(e.target.value)} 
             style={{ padding: '10px', fontSize: '1.2rem', borderRadius: '5px', border: '2px solid #0d6efd' }}
@@ -700,12 +972,100 @@ export default function PantallaMaquinista() {
         </div>
       </div>
 
+      {/* =========================================================================
+          ⏱️ BARRA DE CONTROL DE TURNO REAL (APERTURA Y CIERRE DE HORAS DE MÁQUINA)
+         ========================================================================= */}
+      {maquinaSeleccionada && operadorSeleccionado && (
+        <div style={{
+          marginBottom: '2rem',
+          padding: '1.2rem 1.8rem',
+          borderRadius: '12px',
+          backgroundColor: turnoActivo ? '#0f172a' : '#fff3cd',
+          color: turnoActivo ? 'white' : '#856404',
+          border: turnoActivo ? '3px solid #10b981' : '3px solid #ffc107',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          boxShadow: '0 4px 10px rgba(0,0,0,0.1)'
+        }}>
+          {!turnoActivo ? (
+            <>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>🔴 Máquina con Turno Cerrado</div>
+                <div style={{ fontSize: '0.95rem' }}>
+                  Iniciá tu turno para habilitar la producción y contabilizar las horas reales de apertura en OEE.
+                </div>
+              </div>
+              <button
+                onClick={iniciarTurnoMaquina}
+                style={{
+                  padding: '14px 28px',
+                  fontSize: '1.15rem',
+                  fontWeight: 'bold',
+                  backgroundColor: '#198754',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 6px rgba(0,0,0,0.15)'
+                }}
+              >
+                🟢 INICIAR TURNO EN MÁQUINA
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ backgroundColor: '#10b981', color: '#0f172a', padding: '4px 10px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.82rem' }}>
+                    🟢 TURNO ACTIVO
+                  </span>
+                  <span style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#38bdf8' }}>
+                    {turnoActivo.etiqueta_turno}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.9rem', color: '#cbd5e1', marginTop: '5px' }}>
+                  Apertura: <strong>{turnoActivo.hora_inicio} hs</strong> | Maquinista: <strong>{turnoActivo.operador}</strong> | Máquina: <strong>{turnoActivo.maquina}</strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 'bold' }}>TIEMPO ABIERTO DEL TURNO</div>
+                  <div style={{ fontSize: '1.8rem', fontWeight: 'bold', fontFamily: 'monospace', color: '#4ade80' }}>
+                    {formatearTiempo(segundosTurno)}
+                  </div>
+                </div>
+
+                <button
+                  onClick={abrirConfirmacionFinTurno}
+                  style={{
+                    padding: '12px 22px',
+                    fontSize: '1rem',
+                    fontWeight: 'bold',
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🔴 FINALIZAR TURNO
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {(!maquinaSeleccionada || !operadorSeleccionado) && (
         <h3 style={{ color: '#dc3545', backgroundColor: '#f8d7da', padding: '15px', borderRadius: '8px', display: 'inline-block' }}>👆 Por favor, seleccione su Nombre y Máquina para comenzar.</h3>
       )}
 
       {(maquinaSeleccionada && operadorSeleccionado && !ordenActiva) && (
-        <div style={{ textAlign: 'left', backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+        <div style={{ textAlign: 'left', backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', opacity: turnoActivo ? 1 : 0.65 }}>
           <h2 style={{ marginTop: 0, color: '#0056b3', borderBottom: '2px solid #0056b3', paddingBottom: '10px' }}>Cola de Producción ({colaPedidos.length})</h2>
           {colaPedidos.length === 0 ? (
             <p style={{ fontSize: '1.2rem', color: '#28a745', fontWeight: 'bold' }}>No hay órdenes pendientes. ¡Buen trabajo!</p>
@@ -716,25 +1076,58 @@ export default function PantallaMaquinista() {
                   <th style={{ padding: '15px', textAlign: 'left' }}># Secuencia</th>
                   <th style={{ padding: '15px', textAlign: 'left' }}>N° Orden</th>
                   <th style={{ padding: '15px', textAlign: 'left' }}>Cliente / Producto</th>
-                  <th style={{ padding: '15px', textAlign: 'center' }}>Cant. Pedida</th>
+                  <th style={{ padding: '15px', textAlign: 'center' }}>Meta / Avance</th>
                   <th style={{ padding: '15px', textAlign: 'center' }}>Acción</th>
                 </tr>
               </thead>
               <tbody>
-                {colaPedidos.map((pedido, index) => (
-                  <tr key={pedido.numero_orden} style={{ borderBottom: '1px solid #dee2e6', backgroundColor: index === 0 ? '#fff3cd' : 'white' }}>
-                    <td style={{ padding: '15px', fontWeight: 'bold', color: index === 0 ? '#d39e00' : '#6c757d' }}>{index === 0 ? '▶ PRÓXIMA' : index + 1}</td>
-                    <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '1.2rem' }}>{pedido.numero_orden}</td>
-                    <td style={{ padding: '15px' }}>
-                      <strong>{pedido.cliente}</strong><br/>
-                      <span style={{ fontSize: '0.9rem', color: '#555' }}>{pedido.descripcion_producto || pedido.producto_descripcion}</span>
-                    </td>
-                    <td style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold' }}>{pedido.cantidad_programada}</td>
-                    <td style={{ padding: '15px', textAlign: 'center' }}>
-                      <button onClick={() => seleccionarOrdenParaProducir(pedido)} disabled={index !== 0} style={{ padding: '10px 20px', backgroundColor: index === 0 ? '#28a745' : '#e9ecef', color: index === 0 ? 'white' : '#adb5bd', border: 'none', borderRadius: '5px', cursor: index === 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>Preparar</button>
-                    </td>
-                  </tr>
-                ))}
+                {colaPedidos.map((pedido, index) => {
+                  const yaHechas = Number(pedido.cantidad_fabricada || 0);
+                  const esRelevo = yaHechas > 0 || String(pedido.estado || '').toLowerCase() === 'en producción';
+
+                  return (
+                    <tr key={pedido.numero_orden} style={{ borderBottom: '1px solid #dee2e6', backgroundColor: index === 0 ? '#fff3cd' : 'white' }}>
+                      <td style={{ padding: '15px', fontWeight: 'bold', color: index === 0 ? '#d39e00' : '#6c757d' }}>
+                        {index === 0 ? '▶ PRÓXIMA' : index + 1}
+                        {esRelevo && (
+                          <div style={{ fontSize: '0.72rem', backgroundColor: '#0dcaf0', color: '#000', padding: '2px 6px', borderRadius: '4px', marginTop: '4px', display: 'inline-block' }}>
+                            🔄 EN MÁQUINA (RELEVO)
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '1.2rem' }}>{pedido.numero_orden}</td>
+                      <td style={{ padding: '15px' }}>
+                        <strong>{pedido.cliente}</strong><br/>
+                        <span style={{ fontSize: '0.9rem', color: '#555' }}>{pedido.descripcion_producto || pedido.producto_descripcion}</span>
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold' }}>
+                        <div>{pedido.cantidad_programada} u.</div>
+                        {yaHechas > 0 && (
+                          <div style={{ fontSize: '0.8rem', color: '#198754' }}>
+                            Hechas: {yaHechas} u. (Resta: {Math.max(0, Number(pedido.cantidad_programada) - yaHechas)})
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => seleccionarOrdenParaProducir(pedido)}
+                          disabled={index !== 0 || !turnoActivo}
+                          style={{
+                            padding: '10px 20px',
+                            backgroundColor: (index === 0 && turnoActivo) ? (esRelevo ? '#0d6efd' : '#28a745') : '#e9ecef',
+                            color: (index === 0 && turnoActivo) ? 'white' : '#adb5bd',
+                            border: 'none',
+                            borderRadius: '5px',
+                            cursor: (index === 0 && turnoActivo) ? 'pointer' : 'not-allowed',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          {esRelevo ? '🔄 Continuar Relevo' : 'Preparar'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -743,17 +1136,47 @@ export default function PantallaMaquinista() {
 
       {ordenActiva && !enSetup && !produccionActiva && (
         <div style={{ marginTop: '2rem', backgroundColor: 'white', padding: '2rem', borderRadius: '15px', boxShadow: '0px 8px 15px rgba(0,0,0,0.1)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #eee', paddingBottom: '1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #eee', paddingBottom: '1rem', marginBottom: '1rem', flexWrap: 'wrap', gap: '10px' }}>
             <h2 style={{ margin: 0, color: '#0056b3' }}>Orden Seleccionada: {ordenActiva.numero_orden}</h2>
+            {avancePrevioOrden > 0 && (
+              <span style={{ backgroundColor: '#d1e7dd', color: '#0f5132', padding: '6px 14px', borderRadius: '20px', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                🔄 Continuación de Turno Anterior (Ya fabricadas: {avancePrevioOrden} u.)
+              </span>
+            )}
           </div>
+
           <div style={{ textAlign: 'left', fontSize: '1.3rem', lineHeight: '2' }}>
             <p><strong>Cliente:</strong> {ordenActiva.cliente}</p>
             <p><strong>Producto:</strong> {ordenActiva.descripcion_producto || ordenActiva.producto_descripcion}</p>
-            <p><strong>Cant. Programada:</strong> <span style={{ color: '#dc3545', fontWeight: 'bold' }}>{ordenActiva.cantidad_programada} unid.</span></p>
+            <p>
+              <strong>Cant. Programada Total:</strong>{' '}
+              <span style={{ color: '#dc3545', fontWeight: 'bold' }}>{ordenActiva.cantidad_programada} unid.</span>
+              {avancePrevioOrden > 0 && (
+                <span style={{ marginLeft: '15px', color: '#0d6efd', fontWeight: 'bold' }}>
+                  | Saldo por fabricar en este turno: {metaRestanteOrden} unid.
+                </span>
+              )}
+            </p>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: '2rem' }}>
-            <button onClick={cancelarOrden} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>VOLVER A LA COLA</button>
-            <button onClick={iniciarSetup} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>▶ COMENZAR SET-UP (Preparación)</button>
+
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '2rem', flexWrap: 'wrap' }}>
+            <button onClick={cancelarOrden} style={{ padding: '15px 25px', fontSize: '1.1rem', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+              VOLVER A LA COLA
+            </button>
+
+            {/* Si viene de un relevo o ya estaba en máquina, permite continuar sin cargar un Set-Up falso */}
+            {(ordenActiva.vieneDeRelevo || avancePrevioOrden > 0) && (
+              <button
+                onClick={continuarProduccionRelevoSinSetup}
+                style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#198754', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(0,0,0,0.15)' }}
+              >
+                ⚡ CONTINUAR PRODUCCIÓN DIRECTO (Sin Set-Up)
+              </button>
+            )}
+
+            <button onClick={iniciarSetup} style={{ padding: '15px 30px', fontSize: '1.2rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>
+              ▶ COMENZAR SET-UP (Preparación)
+            </button>
           </div>
         </div>        
       )}
@@ -847,11 +1270,16 @@ export default function PantallaMaquinista() {
           <div style={{ backgroundColor: 'white', padding: '1.5rem', borderRadius: '8px', textAlign: 'left', marginBottom: '2rem', borderLeft: '5px solid #0056b3' }}>
             <p style={{ margin: '0 0 10px 0', fontSize: '1.5rem' }}><strong>Orden {ordenActiva.numero_orden}</strong> | {ordenActiva.cliente}</p>
             <p style={{ margin: 0, fontSize: '1.2rem' }}>{ordenActiva.descripcion_producto || ordenActiva.producto_descripcion}</p>
+            {avancePrevioOrden > 0 && (
+              <p style={{ margin: '8px 0 0 0', fontSize: '1rem', color: '#0f5132', backgroundColor: '#d1e7dd', padding: '6px 12px', borderRadius: '6px', display: 'inline-block', fontWeight: 'bold' }}>
+                🔄 Avance del turno anterior: {avancePrevioOrden} cajas | Restan fabricar: {metaRestanteOrden} cajas
+              </p>
+            )}
           </div>
 
-          {/* --- SECCIÓN DE CONTROL DE PALLETS PARA EXPEDICIÓN (CÁLCULO VISUAL EN VIVO) --- */}
+          {/* --- SECCIÓN DE CONTROL DE PALLETS PARA EXPEDICIÓN --- */}
           <div style={{ backgroundColor: '#ffffff', border: '2px dashed #0d6efd', padding: '15px', borderRadius: '10px', marginBottom: '2rem', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <h4 style={{ margin: '0 0 12px 0', color: '#0d6efd', fontSize: '1.2rem' }}>📦 Control de Pallets para Expedición</h4>
+            <h4 style={{ margin: '0 0 12px 0', color: '#0d6efd', fontSize: '1.2rem' }}>📦 Control de Pallets para Expedición (De este turno)</h4>
             
             <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div>
@@ -868,19 +1296,19 @@ export default function PantallaMaquinista() {
               </div>
 
               <div style={{ flex: 1, backgroundColor: '#e7f5ff', padding: '12px', borderRadius: '8px', fontSize: '1.05rem', border: '1px solid #74c0fc' }}>
-                📊 <strong>Cálculo Automático (Se registrará al finalizar la orden):</strong> {' '}
+                📊 <strong>Cálculo Automático (De tu turno):</strong> {' '}
                 <span style={{ color: '#0b5ed7', fontWeight: 'bold' }}>
                   {Math.floor((Number(cantidadFabricada) || 0) / capPalletSegura)} pallets completos
                 </span>{' '}
-                de {capPalletSegura} u. y un{' '}
+                de {capPalletSegura} u. y{' '}
                 <span style={{ color: '#b02a37', fontWeight: 'bold' }}>
-                  {((Number(cantidadFabricada) || 0) % capPalletSegura) > 0 ? `pallet parcial de ${(Number(cantidadFabricada) || 0) % capPalletSegura} unidades` : 'sin remanente parcial'}.
+                  {((Number(cantidadFabricada) || 0) % capPalletSegura) > 0 ? `1 pallet parcial de ${(Number(cantidadFabricada) || 0) % capPalletSegura} unidades` : 'sin remanente parcial'}.
                 </span>
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
             
             <button onClick={abrirModal} style={{ flex: 1, padding: '30px 15px', fontSize: '1.2rem', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
               ⏸ REGISTRAR PARADA
@@ -892,11 +1320,16 @@ export default function PantallaMaquinista() {
             </button>
 
             <div style={{ flex: 1.5, backgroundColor: 'white', padding: '1.2rem', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-              <label style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '5px' }}>Cant. Fabricada Real (Cajas):</label>
+              <label style={{ fontSize: '1.05rem', fontWeight: 'bold', marginBottom: '5px' }}>
+                Cajas Fabricadas en TU Turno:
+              </label>
               
               <div style={{ fontSize: '0.85rem', color: '#495057', marginBottom: '8px', textAlign: 'center', backgroundColor: '#e9ecef', padding: '5px 10px', borderRadius: '6px', width: '90%' }}>
-                <span>Meta: <strong>{ordenActiva.cantidad_programada}</strong></span> | &nbsp;
-                <span style={{ color: '#d97706' }}>Máx. (+10%): <strong>{Math.round(Number(ordenActiva.cantidad_programada || 0) * 1.10)}</strong></span>
+                <span>Meta Total: <strong>{ordenActiva.cantidad_programada}</strong></span>
+                {avancePrevioOrden > 0 && (
+                  <span> | Restante: <strong style={{ color: '#0d6efd' }}>{metaRestanteOrden}</strong></span>
+                )}
+                {' '}| <span style={{ color: '#d97706' }}>Máx. (+10%): <strong>{Math.round(Number(ordenActiva.cantidad_programada || 0) * 1.10)}</strong></span>
               </div>
 
               <input 
@@ -909,10 +1342,10 @@ export default function PantallaMaquinista() {
               <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
                 <button 
                   onClick={() => cerrarOrdenProduccion('Finalizada Parcial')} 
-                  style={{ flex: 1, padding: '12px 8px', fontSize: '0.95rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
-                  title="Guarda las unidades hechas hasta ahora y envía pallets a Expedición"
+                  style={{ flex: 1, padding: '12px 8px', fontSize: '0.9rem', backgroundColor: '#fd7e14', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+                  title="Cierra la orden con faltante (ej. falta de plancha) y envía a programación"
                 >
-                  ⏸ CIERRE PARCIAL
+                  ⏸ CIERRE C/ FALTANTE
                 </button>
                 <button 
                   onClick={() => cerrarOrdenProduccion('Finalizada')} 
@@ -923,6 +1356,85 @@ export default function PantallaMaquinista() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          🔴 MODAL DE CIERRE DE TURNO Y ENTREGA DE RELEVO (14:00 HS)
+         ========================================================================= */}
+      {mostrarModalFinTurno && turnoActivo && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1500 }}>
+          <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '15px', width: '92%', maxWidth: '560px', textAlign: 'left', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }}>
+            <h2 style={{ marginTop: 0, color: '#dc3545' }}>🔴 Finalizar Turno de Máquina</h2>
+            <p style={{ color: '#495057', fontSize: '1rem', marginBottom: '1rem' }}>
+              Maquinista: <strong>{operadorSeleccionado}</strong> | Máquina: <strong>{maquinaSeleccionada}</strong><br/>
+              Tiempo abierto contabilizado: <strong>{Math.max(1, Math.round(segundosTurno / 60))} minutos ({formatearTiempo(segundosTurno)})</strong>
+            </p>
+
+            {produccionActiva && ordenActiva ? (
+              <div style={{ backgroundColor: '#fff3cd', border: '2px solid #ffc107', padding: '1.2rem', borderRadius: '10px', marginBottom: '1.5rem' }}>
+                <h4 style={{ margin: '0 0 8px 0', color: '#856404' }}>
+                  🔄 Tienes la Orden #{ordenActiva.numero_orden} en curso ({ordenActiva.cliente})
+                </h4>
+                <p style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#664d03' }}>
+                  Indica cuántas cajas dejás fabricadas en tu turno. Si la orden queda incompleta, el próximo turno podrá continuarla directamente sin hacer Set-Up de nuevo:
+                </p>
+
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>
+                  Cajas producidas en TU turno (Meta restante: {metaRestanteOrden} u.):
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={cajasAvanceRelevo}
+                  onChange={(e) => setCajasAvanceRelevo(e.target.value)}
+                  style={{ width: '100%', padding: '10px', fontSize: '1.4rem', fontWeight: 'bold', textAlign: 'center', borderRadius: '6px', border: '2px solid #0d6efd', boxSizing: 'border-box', marginBottom: '12px' }}
+                />
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => confirmarCierreDeTurno('RELEVO_CONTINUA')}
+                    style={{ padding: '14px', backgroundColor: '#0d6efd', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '1rem', cursor: 'pointer' }}
+                  >
+                    🔄 Dejar Orden en Máquina para el Relevo y Cerrar mi Turno
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => confirmarCierreDeTurno('FINALIZAR_ORDEN_TOTAL')}
+                    style={{ padding: '12px', backgroundColor: '#198754', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '0.95rem', cursor: 'pointer' }}
+                  >
+                    ✅ La Orden ya se terminó completa: Finalizar Orden y Cerrar Turno
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p style={{ backgroundColor: '#f8f9fa', padding: '12px', borderRadius: '8px', color: '#495057' }}>
+                ¿Confirmás el cierre de tu turno en <strong>{maquinaSeleccionada}</strong>?
+              </p>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
+              <button
+                type="button"
+                onClick={() => setMostrarModalFinTurno(false)}
+                style={{ padding: '12px 20px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                Volver
+              </button>
+
+              {!(produccionActiva && ordenActiva) && (
+                <button
+                  type="button"
+                  onClick={() => confirmarCierreDeTurno('SIN_ORDEN')}
+                  style={{ padding: '12px 24px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}
+                >
+                  🔴 Confirmar Fin de Turno
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
