@@ -9,6 +9,37 @@ const LISTA_SUPERVISORES = [
   "CRUZ WALTER"
 ];
 
+// Nómina base de respaldo por si en la BD aún no están todos cargados
+const NOMINA_OPERADORES_BASE = [
+  "MARTINEZ ELVIO",
+  "CRUZ WALTER",
+  "OLEA JULIO",
+  "RODRIGUEZ JUAN",
+  "GOMEZ CARLOS",
+  "PEREZ MIGUEL",
+  "DIAZ JORGE",
+  "SANCHEZ SERGIO"
+];
+
+const MAQUINAS_BASE = [
+  "COR-JS",
+  "IMP-JS",
+  "COR-SS",
+  "IMP-SS",
+  "COR-WAR",
+  "WARD",
+  "PBO",
+  "PLM",
+  "PEG",
+  "DIV",
+  "TPL",
+  "TER",
+  "PLO",
+  "TRA",
+  "DYF",
+  "CHI"
+];
+
 const CATALOGO_PARADAS_OFICIAL = [
   "CAMBIO DE ORDEN / SET-UP",
   "AJUSTE DE IMPRESION / REGISTRO",
@@ -61,6 +92,7 @@ export default function PantallaCargaManual() {
   const [turno, setTurno] = useState('M');
   const [maquina, setMaquina] = useState('COR-JS');
   const [operador, setOperador] = useState('');
+  const [operadorManualExtra, setOperadorManualExtra] = useState('');
   const [supervisor, setSupervisor] = useState('SERGIO SANCHEZ');
   const [cantidadFabricada, setCantidadFabricada] = useState('');
   const [estadoCierre, setEstadoCierre] = useState('Finalizada');
@@ -89,26 +121,61 @@ export default function PantallaCargaManual() {
 
   const cargarDatosIniciales = async () => {
     try {
-      const [resPed, resMaq, resOp] = await Promise.all([
+      const [resPed, resMaq, resOp, resHist] = await Promise.all([
         apiFetch('/api/pedidos'),
         apiFetch('/api/pedidos/recursos/maquinas/todas'),
-        apiFetch('/api/pedidos/recursos/operadores/todos')
+        apiFetch('/api/pedidos/recursos/operadores/todos'),
+        apiFetch('/api/pedidos/historial').catch(() => ({ ok: false }))
       ]);
 
+      let listaPedidos = [];
       if (resPed.ok) {
-        const dataPed = await resPed.json();
-        setPedidos(dataPed);
+        listaPedidos = await resPed.json();
+        setPedidos(listaPedidos);
       }
+
+      // Unificamos máquinas de BD + máquinas presentes en los pedidos + catálogo base
+      const setMaq = new Set(MAQUINAS_BASE);
       if (resMaq.ok) {
         const dataMaq = await resMaq.json();
-        setMaquinas(dataMaq);
+        dataMaq.forEach(m => {
+          if (m.codigo_maquina) setMaq.add(String(m.codigo_maquina).trim().toUpperCase());
+        });
       }
+      listaPedidos.forEach(p => {
+        if (p.maquina_asignada && isNaN(p.maquina_asignada) && !String(p.maquina_asignada).includes(',')) {
+          setMaq.add(String(p.maquina_asignada).trim().toUpperCase());
+        }
+      });
+      setMaquinas(Array.from(setMaq).sort());
+
+      // Unificamos todos los operadores de la tabla operadores + los que hayan operado en historial + nómina base
+      const setOp = new Set();
       if (resOp.ok) {
         const dataOp = await resOp.json();
-        setOperadores(dataOp);
-        if (dataOp.length > 0 && !operador) {
-          setOperador(dataOp[0].nombre);
+        dataOp.forEach(op => {
+          if (op.nombre) setOp.add(String(op.nombre).trim().toUpperCase());
+        });
+      }
+      if (resHist && resHist.ok) {
+        const dataHist = await resHist.json();
+        dataHist.forEach(h => {
+          if (h.operador && h.operador !== 'General' && h.operador !== 'Sin Operador') {
+            setOp.add(String(h.operador).trim().toUpperCase());
+          }
+        });
+      }
+      listaPedidos.forEach(p => {
+        if (p.operador && p.operador !== 'General' && p.operador !== 'Sin Operador') {
+          setOp.add(String(p.operador).trim().toUpperCase());
         }
+      });
+      NOMINA_OPERADORES_BASE.forEach(nombre => setOp.add(nombre));
+
+      const listaOpFinal = Array.from(setOp).filter(Boolean).sort();
+      setOperadores(listaOpFinal);
+      if (listaOpFinal.length > 0 && !operador) {
+        setOperador(listaOpFinal[0]);
       }
     } catch (error) {
       console.error('Error al cargar catálogos en Carga Manual:', error);
@@ -122,6 +189,9 @@ export default function PantallaCargaManual() {
   const seleccionarOrden = async (ord) => {
     setOrdenSeleccionada(ord);
     setMaquina(ord.maquina_asignada || 'COR-JS');
+    if (ord.operador && ord.operador !== 'General') {
+      setOperador(String(ord.operador).trim().toUpperCase());
+    }
     setCantidadFabricada(
       ord.cantidad_fabricada && Number(ord.cantidad_fabricada) > 0
         ? String(ord.cantidad_fabricada)
@@ -130,7 +200,6 @@ export default function PantallaCargaManual() {
     setEstadoCierre('Finalizada');
     setParadas([]);
 
-    // Pre-cargar colores si vienen en la orden o desde el endpoint de receta
     const coloresLista = ord.colores
       ? String(ord.colores).split(',').map(c => c.trim()).filter(Boolean)
       : [];
@@ -184,6 +253,14 @@ export default function PantallaCargaManual() {
 
     const numOrd = ordenSeleccionada.numero_orden || ordenSeleccionada.id;
     const cantFab = parseFloat(cantidadFabricada) || 0;
+    const operadorFinal = operador === '__OTRO__'
+      ? operadorManualExtra.trim().toUpperCase()
+      : operador;
+
+    if (!operadorFinal) {
+      alert('⚠️ Seleccioná o escribí el nombre del Maquinista / Operador.');
+      return;
+    }
 
     if (cantFab <= 0 && estadoCierre === 'Finalizada') {
       const confCero = window.confirm('⚠️ Estás por registrar la orden con 0 cajas fabricadas. ¿Continuar de todos modos?');
@@ -199,7 +276,7 @@ export default function PantallaCargaManual() {
           fecha_produccion: fechaProduccion,
           turno,
           maquina,
-          operador,
+          operador: operadorFinal,
           supervisor,
           cantidad_fabricada: cantFab,
           estado_cierre: estadoCierre,
@@ -228,7 +305,7 @@ export default function PantallaCargaManual() {
 
       const data = await res.json();
       if (res.ok) {
-        alert(`✅ ${data.mensaje}\n\n• Impactó en Historial / OEE con fecha ${fechaProduccion}\n• Disponible en Expedición con ${cantFab} cajas.`);
+        alert(`✅ ${data.mensaje}\n\n• Impactó en Historial / OEE con fecha ${fechaProduccion}\n• Maquinista: ${operadorFinal}\n• Disponible en Expedición con ${cantFab} cajas.`);
         await cargarDatosIniciales();
         setOrdenSeleccionada(null);
         setBusqueda('');
@@ -393,34 +470,38 @@ export default function PantallaCargaManual() {
 
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Máquina / Ruta:</label>
-                  <input
-                    list="lista-maquinas-manual"
+                  <select
                     value={maquina}
-                    onChange={(e) => setMaquina(e.target.value.toUpperCase())}
-                    style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #ccc', fontWeight: 'bold', boxSizing: 'border-box' }}
-                  />
-                  <datalist id="lista-maquinas-manual">
+                    onChange={(e) => setMaquina(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #ccc', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
                     {maquinas.map((m, i) => (
-                      <option key={i} value={m.codigo_maquina}>{m.nombre}</option>
+                      <option key={i} value={m}>{m}</option>
                     ))}
-                  </datalist>
+                  </select>
                 </div>
 
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Maquinista / Operador:</label>
-                  <input
-                    list="lista-operadores-manual"
-                    required
-                    placeholder="Nombre del maquinista"
+                  <select
                     value={operador}
-                    onChange={(e) => setOperador(e.target.value.toUpperCase())}
-                    style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #ccc', fontWeight: 'bold', boxSizing: 'border-box' }}
-                  />
-                  <datalist id="lista-operadores-manual">
+                    onChange={(e) => setOperador(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #ccc', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
                     {operadores.map((op, i) => (
-                      <option key={i} value={op.nombre} />
+                      <option key={i} value={op}>{op}</option>
                     ))}
-                  </datalist>
+                    <option value="__OTRO__">➕ Escribir otro maquinista...</option>
+                  </select>
+                  {operador === '__OTRO__' && (
+                    <input
+                      type="text"
+                      placeholder="Escribí Apellido y Nombre..."
+                      value={operadorManualExtra}
+                      onChange={(e) => setOperadorManualExtra(e.target.value.toUpperCase())}
+                      style={{ width: '100%', marginTop: '6px', padding: '7px', borderRadius: '5px', border: '2px solid #fd7e14', fontWeight: 'bold', boxSizing: 'border-box' }}
+                    />
+                  )}
                 </div>
               </div>
 
