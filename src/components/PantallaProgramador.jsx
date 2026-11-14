@@ -8,7 +8,7 @@ const obtenerFamiliaRuta = (ruta) => {
   const limpia = String(ruta).trim().toUpperCase();
   if (limpia.includes('JS')) return 'COR-JS';
   if (limpia.includes('WAR')) return 'COR-WAR';
-  if (limpia.includes('SS')) return 'COR-SS';
+  if (limpia.includes('COR-SS') || limpia === 'SS' || limpia.endsWith('-SS')) return 'COR-SS';
   return null; // Excluye MAC, FOC1, FOC2, MAQ3, ESQ, REB, IMP, DIV, COR-DIV, COR-TER
 };
 
@@ -143,8 +143,10 @@ export default function PantallaProgramador() {
     }
   };
 
-  // Lista base según estemos viendo la cola activa o la papelera de cerradas para revivir
-  const listaBase = mostrarCerradas ? pedidosOcultos : pedidos;
+  // Lista base según estemos viendo la cola activa o la papelera de cerradas para revivir (filtrada solo a Conversión)
+  const listaBase = (mostrarCerradas ? pedidosOcultos : pedidos).filter(
+    p => obtenerFamiliaRuta(p.maquina) !== null
+  );
 
   // 🎯 EXTRAER RUTAS EXACTAS DE CONVERSIÓN (Para el desplegable <select> de cada orden)
   const rutasUnicasPlanta = Array.from(
