@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
 export default function GestionUsuarios() {
@@ -6,6 +6,7 @@ export default function GestionUsuarios() {
   const [listaMaquinas, setListaMaquinas] = useState([]);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
+  const [mostrarPassword, setMostrarPassword] = useState(false);
 
   const [editandoId, setEditandoId] = useState(null);
   const [formData, setFormData] = useState({
@@ -16,6 +17,9 @@ export default function GestionUsuarios() {
     maquina_asignada: '',
     activo: true
   });
+
+  const formRef = useRef(null);
+  const passwordInputRef = useRef(null);
 
   const cargarDatos = async () => {
     try {
@@ -36,6 +40,7 @@ export default function GestionUsuarios() {
 
   const limpiarFormulario = () => {
     setEditandoId(null);
+    setMostrarPassword(false);
     setFormData({
       username: '',
       password: '',
@@ -49,15 +54,25 @@ export default function GestionUsuarios() {
 
   const seleccionarParaEditar = (u) => {
     setEditandoId(u.id);
+    setMostrarPassword(false);
     setFormData({
-      username: u.username,
+      username: u.username || '',
       password: '',
-      nombre_completo: u.nombre_completo,
-      rol: u.rol,
+      nombre_completo: u.nombre_completo || '',
+      rol: (u.rol || 'maquinista').toLowerCase(),
       maquina_asignada: u.maquina_asignada || '',
-      activo: u.activo
+      activo: u.activo !== false
     });
     setError('');
+    setMensaje('');
+
+    // Subimos suavemente al formulario y enfocamos el campo de contraseña
+    if (formRef.current) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    setTimeout(() => {
+      if (passwordInputRef.current) passwordInputRef.current.focus();
+    }, 250);
   };
 
   const guardarUsuario = async (e) => {
@@ -81,8 +96,11 @@ export default function GestionUsuarios() {
       const data = await res.json();
 
       if (res.ok) {
-        setMensaje(editandoId ? '✅ Usuario actualizado con éxito.' : '✅ Usuario creado con éxito.');
-        setTimeout(() => setMensaje(''), 4000);
+        setMensaje(
+          data.mensaje ||
+          (editandoId ? '✅ Usuario actualizado con éxito.' : '✅ Usuario creado con éxito.')
+        );
+        setTimeout(() => setMensaje(''), 6000);
         limpiarFormulario();
         cargarDatos();
       } else {
@@ -113,7 +131,7 @@ export default function GestionUsuarios() {
   };
 
   return (
-    <div style={{ marginTop: '3rem', backgroundColor: 'white', border: '2px solid #cbd5e1', borderRadius: '12px', padding: '2rem', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
+    <div ref={formRef} style={{ marginTop: '3rem', backgroundColor: 'white', border: '2px solid #cbd5e1', borderRadius: '12px', padding: '2rem', boxShadow: '0 4px 10px rgba(0,0,0,0.05)' }}>
       
       <div style={{ borderBottom: '2px solid #0f172a', paddingBottom: '12px', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
@@ -134,9 +152,9 @@ export default function GestionUsuarios() {
         </div>
       )}
 
-      <form onSubmit={guardarUsuario} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '2rem' }}>
+      <form onSubmit={guardarUsuario} style={{ backgroundColor: editandoId ? '#fffbeb' : '#f8fafc', padding: '1.5rem', borderRadius: '10px', border: editandoId ? '2px solid #f59e0b' : '1px solid #e2e8f0', marginBottom: '2rem' }}>
         <h3 style={{ marginTop: 0, color: editandoId ? '#d97706' : '#0284c7' }}>
-          {editandoId ? `✏️ Editando Usuario (ID #${editandoId})` : '➕ Crear Nuevo Usuario'}
+          {editandoId ? `✏️ Editando Usuario "${formData.username}" (ID #${editandoId})` : '➕ Crear Nuevo Usuario'}
         </h3>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -146,7 +164,7 @@ export default function GestionUsuarios() {
             <input 
               type="text" 
               required 
-              autoComplete="new-password"
+              autoComplete="off"
               value={formData.username}
               onChange={(e) => setFormData({...formData, username: e.target.value})}
               placeholder="Ej: s.sanchez"
@@ -156,17 +174,28 @@ export default function GestionUsuarios() {
 
           <div>
             <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '5px', color: '#334155' }}>
-              {editandoId ? 'Nueva Clave (opcional):' : 'Contraseña:'}
+              {editandoId ? '🔑 Nueva Clave (escribí acá para cambiarla):' : 'Contraseña:'}
             </label>
-            <input 
-              type="password" 
-              required={!editandoId}
-              autoComplete="new-password"
-              value={formData.password}
-              onChange={(e) => setFormData({...formData, password: e.target.value})}
-              placeholder={editandoId ? 'Dejar vacío para no cambiar' : '••••••••'}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-            />
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input 
+                ref={passwordInputRef}
+                type={mostrarPassword ? 'text' : 'password'}
+                required={!editandoId}
+                autoComplete="new-password"
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                placeholder={editandoId ? 'Dejar vacío para mantener la actual' : '••••••••'}
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: editandoId ? '2px solid #f59e0b' : '1px solid #cbd5e1', boxSizing: 'border-box' }}
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarPassword(!mostrarPassword)}
+                title={mostrarPassword ? 'Ocultar contraseña' : 'Ver lo que estás escribiendo'}
+                style={{ padding: '0 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff', cursor: 'pointer', fontSize: '1rem' }}
+              >
+                {mostrarPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
           </div>
 
           <div>
@@ -288,7 +317,7 @@ export default function GestionUsuarios() {
           </thead>
           <tbody>
             {usuarios.map(u => (
-              <tr key={u.id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: u.activo ? 'white' : '#fef2f2' }}>
+              <tr key={u.id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: editandoId === u.id ? '#fffbeb' : (u.activo ? 'white' : '#fef2f2') }}>
                 <td style={{ padding: '12px', fontWeight: 'bold', color: '#64748b' }}>#{u.id}</td>
                 <td style={{ padding: '12px', fontWeight: 'bold' }}>{u.username}</td>
                 <td style={{ padding: '12px' }}>{u.nombre_completo}</td>
