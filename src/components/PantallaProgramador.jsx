@@ -167,14 +167,13 @@ export default function PantallaProgramador() {
   });
   const familiasUnicasPlanta = Object.keys(conteoPorFamilia).sort();
 
+  // 🚀 IMPORTADOR INTELIGENTE DE CSV (UTF-8 / ISO-8859-1 + CLISÉS, TROQUELES Y COLORES)
   const procesarCSV = (e) => {
     e.preventDefault();
     if (!archivo) return;
 
-    const lector = new FileReader();
-
-    lector.onload = async (evento) => {
-      const texto = evento.target.result;
+    const procesarTextoCSV = async (textoRaw) => {
+      const texto = String(textoRaw || '').replace(/^\uFEFF/, '');
       const lineas = texto.split(/\r\n|\n/);
 
       let inicioDatos = -1;
@@ -183,6 +182,7 @@ export default function PantallaProgramador() {
 
       const normalizar = (str) =>
         String(str || '')
+          .replace(/^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g, '')
           .replace(/"/g, '')
           .toLowerCase()
           .normalize('NFD')
@@ -194,6 +194,7 @@ export default function PantallaProgramador() {
         cols.forEach((h, idx) => {
           const cleanH = normalizar(h);
           if (
+            cleanH === 'colores' ||
             cleanH.includes('color') ||
             cleanH.includes('tinta') ||
             cleanH.includes('impresi') ||
@@ -212,45 +213,80 @@ export default function PantallaProgramador() {
 
         const lineaNorm = normalizar(lineas[i]);
 
+        // 1. DETECCIÓN DE MAESTRO_PEDIDOS.CSV
         if (lineaNorm.includes('fecha pedido') || lineaNorm.includes('fecha entrega') || lineaNorm.includes('m2 pend')) {
           tipoArchivo = 'PEDIDOS';
           indicesCols.colsColores = detectarColumnasColor(cols);
           cols.forEach((h, idx) => {
             const cleanH = normalizar(h);
             if (idx === 0 || cleanH.includes('numero') || cleanH === 'nro') indicesCols.numero = idx;
-            if (cleanH === 'fecha pedido') indicesCols.fecha_pedido = idx;
-            if (cleanH === 'fecha entrega') indicesCols.fecha_entrega = idx;
-            if (cleanH === 'cliente') indicesCols.cliente = idx;
-            if (cleanH === 'rubro') indicesCols.rubro = idx;
-            if (cleanH.includes('producto') && (cleanH.includes('cod') || idx === 10)) indicesCols.codigo_producto = idx;
-            if (cleanH.startsWith('descripci')) indicesCols.descripcion = idx;
-            if (cleanH === 'largo') indicesCols.largo = idx;
-            if (cleanH === 'ancho') indicesCols.ancho = idx;
-            if (cleanH === 'plancha') indicesCols.plancha = idx;
-            if (cleanH === 'cant.' || cleanH === 'cantidad') indicesCols.cantidad = idx;
+            if (cleanH === 'fecha pedido' || idx === 1) indicesCols.fecha_pedido = idx;
+            if (cleanH === 'fecha entrega' || idx === 2) indicesCols.fecha_entrega = idx;
+            if (cleanH === 'cliente' || idx === 5) indicesCols.cliente = idx;
+            if (cleanH === 'rubro' || idx === 6) indicesCols.rubro = idx;
+            if ((cleanH.includes('producto') && cleanH.includes('cod')) || idx === 10) indicesCols.codigo_producto = idx;
+            if (cleanH.startsWith('descripci') || idx === 13) indicesCols.descripcion = idx;
+            if (cleanH === 'largo' || idx === 17) indicesCols.largo = idx;
+            if (cleanH === 'ancho' || idx === 18) indicesCols.ancho = idx;
+            if (cleanH === 'plancha' || idx === 19) indicesCols.plancha = idx;
+            if (cleanH === 'cant.' || cleanH === 'cantidad' || idx === 20) indicesCols.cantidad = idx;
             if (cleanH.includes('tot') && cleanH.startsWith('m')) indicesCols.m2_tot = idx;
             if (cleanH.includes('pend') && cleanH.startsWith('m')) indicesCols.m2_pend = idx;
-            if (cleanH === 'peso') indicesCols.peso = idx;
-            if (cleanH === 'ruta') indicesCols.ruta = idx;
+            if (cleanH === 'peso' || idx === 26) indicesCols.peso = idx;
+            if (cleanH === 'bocas' || idx === 27) indicesCols.bocas = idx;
+            if (cleanH === 'ruta' || idx === 39) indicesCols.ruta = idx;
           });
           inicioDatos = i + 1;
           break;
         }
 
-        if (lineaNorm.includes('codigo') || lineaNorm.includes('cliente') || lineaNorm.includes('descripci') || lineaNorm.includes('largo')) {
+        // 2. DETECCIÓN DE MAESTRO_PRODUCTOS.CSV (30 Columnas)
+        if (
+          lineaNorm.includes('rubro comercial') ||
+          lineaNorm.includes('troquel') ||
+          lineaNorm.includes('codigo') ||
+          lineaNorm.includes('cliente')
+        ) {
           tipoArchivo = 'PRODUCTOS';
           indicesCols.colsColores = detectarColumnasColor(cols);
+          // Índices exactos por defecto según estructura oficial de Maestro_Productos.csv
+          indicesCols = {
+            ...indicesCols,
+            codigo_producto: 0,
+            cliente: 4,
+            descripcion: 5,
+            plano: 8,
+            troquel: 9,
+            ubic_troquel: 10,
+            material: 11,
+            clise: 15,
+            ubic_clise: 16,
+            largo: 17,
+            ancho: 18,
+            superficie_m2: 19,
+            ruta: 21,
+            bocas: 22
+          };
+
           cols.forEach((h, idx) => {
             const cleanH = normalizar(h);
-            if (cleanH.includes('cod') || idx === 0) indicesCols.codigo_producto = idx;
-            if (cleanH.includes('cliente')) indicesCols.cliente = idx;
+            // 🛡️ IMPORTANTE: Solo columna 0 o "codigo" exacto (no pisar con "Código cliente" col 2 ni "Cod. cliente" col 3)
+            if (idx === 0 || (cleanH === 'codigo' && !cleanH.includes('cliente'))) {
+              indicesCols.codigo_producto = idx;
+            }
+            if (cleanH === 'cliente') indicesCols.cliente = idx;
             if (cleanH.startsWith('descripci')) indicesCols.descripcion = idx;
-            if (cleanH.includes('material') || cleanH.includes('onda') || cleanH.includes('calidad')) indicesCols.material = idx;
-            if (cleanH.includes('largo')) indicesCols.largo = idx;
-            if (cleanH.includes('ancho') && !cleanH.includes('pref')) indicesCols.ancho = idx;
-            if (cleanH.includes('m2') || cleanH.includes('superficie')) indicesCols.superficie_m2 = idx;
-            if (cleanH.includes('herramienta') || cleanH.includes('troquel') || cleanH.includes('clise')) indicesCols.herramientas = idx;
-            if (cleanH.includes('ruta')) indicesCols.ruta = idx;
+            if (cleanH === 'plano') indicesCols.plano = idx;
+            if (cleanH === 'troquel') indicesCols.troquel = idx;
+            if (cleanH.includes('ubic') && cleanH.includes('troquel')) indicesCols.ubic_troquel = idx;
+            if (cleanH === 'corrugado' || cleanH.includes('material')) indicesCols.material = idx;
+            if ((cleanH.startsWith('clis') || cleanH === 'clise') && !cleanH.includes('ubic')) indicesCols.clise = idx;
+            if (cleanH.includes('ubic') && cleanH.includes('clis')) indicesCols.ubic_clise = idx;
+            if (cleanH === 'largo') indicesCols.largo = idx;
+            if (cleanH === 'ancho') indicesCols.ancho = idx;
+            if (cleanH.includes('m2') || cleanH.includes('superficie') || idx === 19) indicesCols.superficie_m2 = idx;
+            if (cleanH === 'ruta') indicesCols.ruta = idx;
+            if (cleanH === 'bocas') indicesCols.bocas = idx;
           });
           inicioDatos = i + 1;
           break;
@@ -315,17 +351,25 @@ export default function PantallaProgramador() {
           if (!codProd) continue;
 
           const infoColores = extraerColoresDeFila(cols);
+          const troqVal = cols[indicesCols.troquel ?? 9]?.replace(/"/g, '').trim() || null;
+          const cliseVal = cols[indicesCols.clise ?? 15]?.replace(/"/g, '').trim() || null;
 
           payloadProductos.push({
             codigo_producto: codProd,
-            cliente: cols[indicesCols.cliente]?.replace(/"/g, '').trim() || null,
-            descripcion: cols[indicesCols.descripcion]?.replace(/"/g, '').trim() || null,
-            material: indicesCols.material !== undefined ? cols[indicesCols.material]?.replace(/"/g, '').trim() : null,
-            largo_mm: limpiarNum(cols[indicesCols.largo]),
-            ancho_mm: limpiarNum(cols[indicesCols.ancho]),
-            superficie_m2: indicesCols.superficie_m2 !== undefined ? limpiarNum(cols[indicesCols.superficie_m2]) : null,
-            herramientas: indicesCols.herramientas !== undefined ? cols[indicesCols.herramientas]?.replace(/"/g, '').trim() : null,
-            ruta_sugerida: cols[indicesCols.ruta ?? cols.length - 1]?.replace(/"/g, '').trim() || 'COR-JS',
+            cliente: cols[indicesCols.cliente ?? 4]?.replace(/"/g, '').trim() || null,
+            descripcion: cols[indicesCols.descripcion ?? 5]?.replace(/"/g, '').trim() || null,
+            plano: cols[indicesCols.plano ?? 8]?.replace(/"/g, '').trim() || null,
+            troquel: troqVal,
+            ubic_troquel: cols[indicesCols.ubic_troquel ?? 10]?.replace(/"/g, '').trim() || null,
+            material: cols[indicesCols.material ?? 11]?.replace(/"/g, '').trim() || null,
+            clise: cliseVal,
+            ubic_clise: cols[indicesCols.ubic_clise ?? 16]?.replace(/"/g, '').trim() || null,
+            herramientas: [troqVal, cliseVal].filter(Boolean).join(' | ') || null,
+            largo_mm: limpiarNum(cols[indicesCols.largo ?? 17]),
+            ancho_mm: limpiarNum(cols[indicesCols.ancho ?? 18]),
+            superficie_m2: limpiarNum(cols[indicesCols.superficie_m2 ?? 19]),
+            ruta_sugerida: cols[indicesCols.ruta ?? 21]?.replace(/"/g, '').trim() || 'COR-JS',
+            bocas: parseInt(cols[indicesCols.bocas ?? 22]?.replace(/"/g, '').trim(), 10) || 1,
             ...infoColores
           });
         }
@@ -348,6 +392,7 @@ export default function PantallaProgramador() {
         return;
       }
 
+      // PROCESAMIENTO DE MAESTRO_PEDIDOS.CSV
       const payloadPedidos = [];
       const productosDesdePedidosMap = new Map();
 
@@ -367,6 +412,7 @@ export default function PantallaProgramador() {
         const descVal = cols[indicesCols.descripcion ?? 13]?.replace(/"/g, '').trim() || null;
         const largoVal = limpiarNum(cols[indicesCols.largo ?? 17]);
         const anchoVal = limpiarNum(cols[indicesCols.ancho ?? 18]);
+        const bocasPed = parseInt(cols[indicesCols.bocas ?? 27]?.replace(/"/g, '').trim(), 10) || null;
 
         const infoColores = extraerColoresDeFila(cols);
 
@@ -398,6 +444,7 @@ export default function PantallaProgramador() {
               largo_mm: largoVal,
               ancho_mm: anchoVal,
               ruta_sugerida: rutaVal || 'COR-JS',
+              bocas: bocasPed,
               ...infoColores
             });
           }
@@ -432,7 +479,19 @@ export default function PantallaProgramador() {
       }
     };
 
-    lector.readAsText(archivo, 'ISO-8859-1');
+    // Primero leemos en UTF-8; si detecta caracteres ANSI antiguos (\uFFFD), relee automáticamente en ISO-8859-1
+    const lectorUTF8 = new FileReader();
+    lectorUTF8.onload = (ev) => {
+      const contenido = String(ev.target.result || '');
+      if (contenido.includes('\uFFFD')) {
+        const lectorISO = new FileReader();
+        lectorISO.onload = (ev2) => procesarTextoCSV(ev2.target.result);
+        lectorISO.readAsText(archivo, 'ISO-8859-1');
+      } else {
+        procesarTextoCSV(contenido);
+      }
+    };
+    lectorUTF8.readAsText(archivo, 'UTF-8');
   };
 
   const cambiarMaquina = async (id, nuevaMaquina) => {
