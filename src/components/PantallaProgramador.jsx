@@ -2,6 +2,18 @@ import { useState, useEffect } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { apiFetch } from '../services/api'; // 👈 IMPORTACIÓN CENTRALIZADA
 
+// 🎯 Agrupa cualquier sub-ruta exclusivamente en las 3 líneas de Conversión: JS, Ward y SS
+const obtenerFamiliaRuta = (ruta) => {
+  if (!ruta) return null;
+  const limpia = String(ruta).trim().toUpperCase();
+  if (limpia.includes('JS')) return 'COR-JS';
+  if (limpia.includes('WAR')) return 'COR-WAR';
+  if (limpia.includes('SS')) return 'COR-SS';
+  return null; // Excluye MAC, FOC1, FOC2, MAQ3, ESQ, REB, IMP, DIV, COR-DIV, COR-TER
+};
+
+const ORDEN_FAMILIAS_CONVERSION = ['COR-JS', 'COR-SS', 'COR-WAR'];
+
 export default function PantallaProgramador() {
   const [pedidos, setPedidos] = useState([]);
   const [pedidosOcultos, setPedidosOcultos] = useState([]); // 📦 Guarda las cerradas para poder revivirlas si hace falta
@@ -35,6 +47,9 @@ export default function PantallaProgramador() {
 
         data.forEach(p => {
           const item = formatear(p);
+          // Filtramos exclusivamente las órdenes de Conversión de Planta (JS, Ward y SS)
+          if (!obtenerFamiliaRuta(item.maquina)) return;
+
           const est = item.estado.trim().toUpperCase();
           if (ESTADOS_OCULTOS.includes(est)) {
             cerrados.push(item);
@@ -128,44 +143,31 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 1. FUNCIÓN PARA AGRUPAR CUALQUIER RUTA EN SU FAMILIA BASE
-  const obtenerFamiliaRuta = (ruta) => {
-    if (!ruta) return '';
-    const limpia = ruta.trim().toUpperCase();
-    const partes = limpia.split('-');
-
-    if (partes[0].startsWith('COR') && partes.length >= 2) {
-      const maquinaBase = partes[1].replace(/X\d+$/i, '');
-      return `COR-${maquinaBase}`;
-    }
-
-    return partes[0];
-  };
-
   // Lista base según estemos viendo la cola activa o la papelera de cerradas para revivir
   const listaBase = mostrarCerradas ? pedidosOcultos : pedidos;
 
-  // 🎯 2. EXTRAER RUTAS EXACTAS ÚNICAS (Para el desplegable <select> de cada orden)
+  // 🎯 EXTRAER RUTAS EXACTAS DE CONVERSIÓN (Para el desplegable <select> de cada orden)
   const rutasUnicasPlanta = Array.from(
-    new Set(
-      [...pedidos, ...pedidosOcultos]
-        .map(p => p.maquina ? p.maquina.trim().toUpperCase() : '')
-        .filter(m => m && isNaN(m) && !m.includes(','))
-    )
+    new Set([
+      ...ORDEN_FAMILIAS_CONVERSION,
+      ...[...pedidos, ...pedidosOcultos]
+        .map(p => (p.maquina ? p.maquina.trim().toUpperCase() : ''))
+        .filter(m => m && isNaN(m) && !m.includes(',') && obtenerFamiliaRuta(m) !== null)
+    ])
   ).sort();
 
-  // 🎯 3. EXTRAER FAMILIAS DE RUTA Y CONTAR ÓRDENES (Para los botones de Filtro Ruta)
-  const conteoPorFamilia = {};
+  // 🎯 CONTAR ÓRDENES POR CADA UNA DE LAS 3 LÍNEAS DE CONVERSIÓN (COR-JS, COR-SS, COR-WAR)
+  const conteoPorFamilia = {
+    'COR-JS': 0,
+    'COR-SS': 0,
+    'COR-WAR': 0
+  };
   listaBase.forEach(p => {
-    const raw = p.maquina ? p.maquina.trim().toUpperCase() : '';
-    if (raw && isNaN(raw) && !raw.includes(',')) {
-      const fam = obtenerFamiliaRuta(raw);
-      if (fam) {
-        conteoPorFamilia[fam] = (conteoPorFamilia[fam] || 0) + 1;
-      }
+    const fam = obtenerFamiliaRuta(p.maquina);
+    if (fam && conteoPorFamilia[fam] !== undefined) {
+      conteoPorFamilia[fam] += 1;
     }
   });
-  const familiasUnicasPlanta = Object.keys(conteoPorFamilia).sort();
 
   // 🚀 IMPORTADOR INTELIGENTE DE CSV (UTF-8 / ISO-8859-1 + CLISÉS, TROQUELES Y COLORES)
   const procesarCSV = (e) => {
@@ -249,7 +251,6 @@ export default function PantallaProgramador() {
         ) {
           tipoArchivo = 'PRODUCTOS';
           indicesCols.colsColores = detectarColumnasColor(cols);
-          // Índices exactos por defecto según estructura oficial de Maestro_Productos.csv
           indicesCols = {
             ...indicesCols,
             codigo_producto: 0,
@@ -270,7 +271,6 @@ export default function PantallaProgramador() {
 
           cols.forEach((h, idx) => {
             const cleanH = normalizar(h);
-            // 🛡️ IMPORTANTE: Solo columna 0 o "codigo" exacto (no pisar con "Código cliente" col 2 ni "Cod. cliente" col 3)
             if (idx === 0 || (cleanH === 'codigo' && !cleanH.includes('cliente'))) {
               indicesCols.codigo_producto = idx;
             }
@@ -479,7 +479,6 @@ export default function PantallaProgramador() {
       }
     };
 
-    // Primero leemos en UTF-8; si detecta caracteres ANSI antiguos (\uFFFD), relee automáticamente en ISO-8859-1
     const lectorUTF8 = new FileReader();
     lectorUTF8.onload = (ev) => {
       const contenido = String(ev.target.result || '');
@@ -627,7 +626,7 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA
+  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA (EXCLUSIVO CONVERSIÓN: JS, SS, WARD)
   const pedidosFiltrados = listaBase.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
     return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
@@ -640,7 +639,10 @@ export default function PantallaProgramador() {
       
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem', borderBottom: '3px solid #17a2b8', paddingBottom: '10px' }}>
         <span style={{ fontSize: '2.5rem', marginRight: '15px' }}>💻</span>
-        <h2 style={{ color: '#17a2b8', margin: 0, fontSize: '2rem' }}>Panel de Programación de Producción</h2>
+        <div>
+          <h2 style={{ color: '#17a2b8', margin: 0, fontSize: '2rem' }}>Panel de Programación de Producción</h2>
+          <small style={{ color: '#6c757d', fontWeight: 'bold' }}>Conversión de Planta · Líneas COR-JS, COR-SS y COR-WAR</small>
+        </div>
       </div>
 
       <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '2rem', borderLeft: '5px solid #6c757d' }}>
@@ -692,7 +694,7 @@ export default function PantallaProgramador() {
           </div>
           
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Ruta:</span>
+            <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '5px' }}>Filtro Máquina:</span>
             <button 
               onClick={() => setFiltroMaquina('TODAS')}
               style={{ 
@@ -703,7 +705,7 @@ export default function PantallaProgramador() {
               }}>
               Todas ({listaBase.length})
             </button>
-            {familiasUnicasPlanta.map((familia) => (
+            {ORDEN_FAMILIAS_CONVERSION.map((familia) => (
               <button 
                 key={familia}
                 onClick={() => setFiltroMaquina(familia)}
@@ -713,7 +715,7 @@ export default function PantallaProgramador() {
                   color: filtroMaquina === familia ? 'white' : '#333', 
                   cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' 
                 }}>
-                {familia} ({conteoPorFamilia[familia]})
+                {familia} ({conteoPorFamilia[familia] || 0})
               </button>
             ))}
           </div>
