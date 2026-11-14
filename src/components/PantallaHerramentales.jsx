@@ -1,5 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { apiFetch } from '../services/api';
+
+// 🎯 Agrupa cualquier sub-ruta exclusivamente en las 3 máquinas de Conversión: JS, Ward y SS
+const obtenerFamiliaConversion = (ruta) => {
+  if (!ruta) return null;
+  const limpia = String(ruta).trim().toUpperCase();
+  if (limpia.includes('JS')) return 'COR-JS';
+  if (limpia.includes('WAR')) return 'COR-WAR';
+  if (limpia.includes('SS')) return 'COR-SS';
+  return null; // Excluye Bolsas (MAC, FOC1, FOC2, MAQ3), Esquineros (ESQ), Bobinas (REB), etc.
+};
+
+const ORDEN_MAQUINAS_CONVERSION = ['COR-JS', 'COR-SS', 'COR-WAR'];
 
 export default function PantallaHerramentales() {
   const [pestana, setPestana] = useState('radar'); // 'radar' | 'clises' | 'troqueles' | 'historial'
@@ -272,10 +284,25 @@ export default function PantallaHerramentales() {
     );
   };
 
-  const maquinasRadar = Array.from(new Set(radarCola.map(r => r.maquina).filter(Boolean))).sort();
+  // 🎯 1. Filtramos la cola para dejar ÚNICAMENTE las órdenes de Conversión (JS, Ward y SS)
+  const radarSoloConversion = radarCola.filter(r => obtenerFamiliaConversion(r.maquina) !== null);
 
-  const radarFiltrado = radarCola.filter(r =>
-    filtroMaquinaRadar === 'TODAS' ? true : r.maquina === filtroMaquinaRadar
+  // 🎯 2. Contamos cuántas órdenes tiene cada una de las 3 máquinas (COR-JS, COR-SS, COR-WAR)
+  const conteoPorFamilia = {
+    'COR-JS': 0,
+    'COR-SS': 0,
+    'COR-WAR': 0
+  };
+  radarSoloConversion.forEach(r => {
+    const fam = obtenerFamiliaConversion(r.maquina);
+    if (fam && conteoPorFamilia[fam] !== undefined) {
+      conteoPorFamilia[fam] += 1;
+    }
+  });
+
+  // 🎯 3. Aplicamos el botón de filtro seleccionado
+  const radarFiltrado = radarSoloConversion.filter(r =>
+    filtroMaquinaRadar === 'TODAS' ? true : obtenerFamiliaConversion(r.maquina) === filtroMaquinaRadar
   );
 
   const clisesFiltrados = clises
@@ -324,7 +351,7 @@ export default function PantallaHerramentales() {
               Administración Inteligente de Clisés y Troqueles (Alistamiento)
             </h2>
             <small style={{ color: '#6c757d', fontWeight: 'bold' }}>
-              Control de Percheros, Filas, Giros por Polímero de Color, Golpes de Troquel y Versionado
+              Conversión de Planta (Líneas JS, Ward y SS) · Control de Percheros, Filas, Giros y Golpes
             </small>
           </div>
         </div>
@@ -369,7 +396,7 @@ export default function PantallaHerramentales() {
             color: pestana === 'radar' ? '#fff' : '#343a40'
           }}
         >
-          📡 1. Radar de Cola (Pedidos a Preparar: {radarCola.length})
+          📡 1. Radar de Cola Conversión ({radarSoloConversion.length})
         </button>
 
         <button
@@ -407,27 +434,48 @@ export default function PantallaHerramentales() {
       </div>
 
       {/* =========================================================================
-          PESTAÑA 1: RADAR DE COLA (ALISTAMIENTO DE PEDIDOS EN COLA)
+          PESTAÑA 1: RADAR DE COLA (EXCLUSIVO CONVERSIÓN: JS, SS Y WARD)
          ========================================================================= */}
       {pestana === 'radar' && (
         <div style={{ backgroundColor: '#fff', padding: '1.5rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderLeft: '5px solid #6f42c1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '12px' }}>
             <h3 style={{ margin: 0, color: '#343a40' }}>📡 Preparación Anticipada según Secuencia de Programación</h3>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#6c757d' }}>Máquina:</span>
+            
+            {/* FILTRO SIMPLIFICADO IGUAL AL PROGRAMADOR (SOLO JS, SS Y WARD) */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#6c757d', marginRight: '4px' }}>Filtro Máquina:</span>
               <button
                 onClick={() => setFiltroMaquinaRadar('TODAS')}
-                style={{ padding: '6px 12px', borderRadius: '5px', border: '1px solid #ccc', backgroundColor: filtroMaquinaRadar === 'TODAS' ? '#6f42c1' : '#f8f9fa', color: filtroMaquinaRadar === 'TODAS' ? '#fff' : '#333', fontWeight: 'bold', cursor: 'pointer' }}
+                style={{
+                  padding: '7px 15px',
+                  borderRadius: '6px',
+                  border: '1px solid #ccc',
+                  backgroundColor: filtroMaquinaRadar === 'TODAS' ? '#17a2b8' : '#f8f9fa',
+                  color: filtroMaquinaRadar === 'TODAS' ? '#fff' : '#333',
+                  fontWeight: 'bold',
+                  fontSize: '0.88rem',
+                  cursor: 'pointer'
+                }}
               >
-                Todas ({radarCola.length})
+                Todas ({radarSoloConversion.length})
               </button>
-              {maquinasRadar.map(m => (
+
+              {ORDEN_MAQUINAS_CONVERSION.map(maq => (
                 <button
-                  key={m}
-                  onClick={() => setFiltroMaquinaRadar(m)}
-                  style={{ padding: '6px 12px', borderRadius: '5px', border: '1px solid #ccc', backgroundColor: filtroMaquinaRadar === m ? '#6f42c1' : '#f8f9fa', color: filtroMaquinaRadar === m ? '#fff' : '#333', fontWeight: 'bold', cursor: 'pointer' }}
+                  key={maq}
+                  onClick={() => setFiltroMaquinaRadar(maq)}
+                  style={{
+                    padding: '7px 15px',
+                    borderRadius: '6px',
+                    border: '1px solid #ccc',
+                    backgroundColor: filtroMaquinaRadar === maq ? '#17a2b8' : '#f8f9fa',
+                    color: filtroMaquinaRadar === maq ? '#fff' : '#333',
+                    fontWeight: 'bold',
+                    fontSize: '0.88rem',
+                    cursor: 'pointer'
+                  }}
                 >
-                  {m}
+                  {maq} ({conteoPorFamilia[maq] || 0})
                 </button>
               ))}
             </div>
@@ -610,8 +658,8 @@ export default function PantallaHerramentales() {
                   const cuerpos = Array.isArray(c.cuerpos_json) ? c.cuerpos_json : [];
 
                   return (
-                    <>
-                      <tr key={c.id} style={{ borderBottom: '1px solid #dee2e6', backgroundColor: c.estado === 'Requiere Revisión' ? '#fff5f5' : '#fff' }}>
+                    <Fragment key={c.id}>
+                      <tr style={{ borderBottom: '1px solid #dee2e6', backgroundColor: c.estado === 'Requiere Revisión' ? '#fff5f5' : '#fff' }}>
                         <td style={{ padding: '10px 8px', fontWeight: 'bold', color: '#0d6efd', fontSize: '1rem' }}>
                           {c.codigo_clise}
                           {c.reemplazado_por && (
@@ -729,7 +777,7 @@ export default function PantallaHerramentales() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>
