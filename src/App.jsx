@@ -9,6 +9,7 @@ import PantallaMonitorTV from './components/PantallaMonitorTV';
 import PantallaDesarrollador from './components/PantallaDesarrollador';
 import PantallaExpedicion from './components/PantallaExpedicion';
 import PantallaCargaManual from './components/PantallaCargaManual'; // 👈 NUEVA CONSOLA DE PARTES FÍSICOS
+import PantallaHerramentales from './components/PantallaHerramentales';
 
 export default function App() {
   const [usuarioActual, setUsuarioActual] = useState(null);
@@ -175,6 +176,14 @@ export default function App() {
             </button>
           )}
 
+          {tienePermiso('herramentales') && (
+            <button 
+              onClick={() => setRolActivo('herramentales')}
+              style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#6f42c1', color: 'white', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
+             🛠️ Clisés y Troqueles (Alistamiento)
+            </button>
+          )}
+
         </div>
       </div>
     );
@@ -214,6 +223,7 @@ export default function App() {
         {rolActivo === 'configuracion' && <PantallaConfiguracion />}
         {rolActivo === 'monitor' && <PantallaMonitorTV />}
         {rolActivo === 'expedicion' && <PantallaExpedicion />}
+        {rolActivo === 'herramentales' && <PantallaHerramentales />}
       </div>
 
     </div>
