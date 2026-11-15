@@ -21,9 +21,32 @@ export default function PantallaProgramador() {
   const [archivo, setArchivo] = useState(null);
   const [filtroMaquina, setFiltroMaquina] = useState('TODAS');
 
+  // 🛠️ Mapa en vivo del estado de Clisés y Troqueles desde Alistamiento (Poka-Yoke)
+  const [mapaHerramentales, setMapaHerramentales] = useState({});
+
+  // 🚀 Estado de la Barra de Progreso Turbo Batch
+  const [progresoCarga, setProgresoCarga] = useState({
+    activo: false,
+    porcentaje: 0,
+    detalle: ''
+  });
+
   const cargarPedidosDesdeBD = async () => {
     try {
-      const respuesta = await apiFetch('/api/pedidos');
+      const [respuesta, resRadar] = await Promise.all([
+        apiFetch('/api/pedidos'),
+        apiFetch('/api/herramentales/radar-cola').catch(() => null)
+      ]);
+
+      if (resRadar && resRadar.ok) {
+        const dataRadar = await resRadar.json();
+        const nuevoMapa = {};
+        dataRadar.forEach(item => {
+          nuevoMapa[String(item.numero_orden)] = item;
+        });
+        setMapaHerramentales(nuevoMapa);
+      }
+
       if (respuesta.ok) {
         const data = await respuesta.json();
         
@@ -47,7 +70,6 @@ export default function PantallaProgramador() {
 
         data.forEach(p => {
           const item = formatear(p);
-          // Filtramos exclusivamente las órdenes de Conversión de Planta (JS, Ward y SS)
           if (!obtenerFamiliaRuta(item.maquina)) return;
 
           const est = item.estado.trim().toUpperCase();
@@ -72,6 +94,19 @@ export default function PantallaProgramador() {
   useEffect(() => {
     cargarPedidosDesdeBD();
   }, []);
+
+  // 🛡️ Función auxiliar que envía una petición con reintento automático si el Wi-Fi parpadea
+  const enviarConReintento = async (url, opciones, reintentos = 3) => {
+    for (let intento = 1; intento <= reintentos; intento++) {
+      try {
+        const res = await apiFetch(url, opciones);
+        return res;
+      } catch (err) {
+        if (intento === reintentos) throw err;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+  };
 
   // 🚑 RESCATAR / REVIVIR ORDEN CERRADA EN CERO O POR ERROR
   const revivirOrden = async (pedido) => {
@@ -143,7 +178,7 @@ export default function PantallaProgramador() {
     }
   };
 
-  // Lista base según estemos viendo la cola activa o la papelera de cerradas para revivir (filtrada solo a Conversión)
+  // Lista base filtrada exclusivamente para las 3 máquinas de Conversión
   const listaBase = (mostrarCerradas ? pedidosOcultos : pedidos).filter(
     p => obtenerFamiliaRuta(p.maquina) !== null
   );
@@ -171,10 +206,10 @@ export default function PantallaProgramador() {
     }
   });
 
-  // 🚀 IMPORTADOR INTELIGENTE DE CSV (UTF-8 / ISO-8859-1 + CLISÉS, TROQUELES Y COLORES)
+  // 🚀 IMPORTADOR TURBO POR LOTES (CON BARRA DE PROGRESO Y REINTENTO ANTI-CORTE WI-FI)
   const procesarCSV = (e) => {
     e.preventDefault();
-    if (!archivo) return;
+    if (!archivo || progresoCarga.activo) return;
 
     const procesarTextoCSV = async (textoRaw) => {
       const texto = String(textoRaw || '').replace(/^\uFEFF/, '');
@@ -344,13 +379,14 @@ export default function PantallaProgramador() {
         };
       };
 
+      // 🚀 CARGA TURBO POR LOTES DE PRODUCTOS (400 POR LOTE)
       if (tipoArchivo === 'PRODUCTOS') {
         const payloadProductos = [];
         for (let i = inicioDatos; i < lineas.length; i++) {
           if (!lineas[i].trim()) continue;
           const cols = lineas[i].split(';');
           const codProd = cols[indicesCols.codigo_producto ?? 0]?.replace(/"/g, '').trim();
-          if (!codProd) continue;
+          if (!codProd || codProd.startsWith('!')) continue;
 
           const infoColores = extraerColoresDeFila(cols);
           const troqVal = cols[indicesCols.troquel ?? 9]?.replace(/"/g, '').trim() || null;
@@ -376,20 +412,59 @@ export default function PantallaProgramador() {
           });
         }
 
+        const TAMANO_LOTE = 400;
+        const totalLotes = Math.ceil(payloadProductos.length / TAMANO_LOTE);
+        let totalInsertados = 0;
+        let totalOmitidos = 0;
+        let resumenFinalHerramentales = '';
+
         try {
-          const respuesta = await apiFetch('/api/productos/sincronizar', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ productos: payloadProductos }),
-          });
-          const resultado = await respuesta.json();
-          if (respuesta.ok) {
-            alert(`✅ [Base de PRODUCTOS]\n${resultado.mensaje}`);
-          } else {
-            alert(`❌ Error en BD Productos: ${resultado.error}`);
+          for (let idxLote = 0; idxLote < totalLotes; idxLote++) {
+            const inicio = idxLote * TAMANO_LOTE;
+            const lote = payloadProductos.slice(inicio, inicio + TAMANO_LOTE);
+            const esUltimoLote = idxLote === totalLotes - 1;
+            const pct = Math.round(((idxLote + 1) / totalLotes) * 100);
+
+            setProgresoCarga({
+              activo: true,
+              porcentaje: pct,
+              detalle: esUltimoLote
+                ? `🔄 Lote final (${idxLote + 1}/${totalLotes}) y actualizando Clisés y Troqueles...`
+                : `📦 Subiendo productos: ${Math.min(inicio + TAMANO_LOTE, payloadProductos.length)} de ${payloadProductos.length} (${pct}%)`
+            });
+
+            const respuesta = await enviarConReintento('/api/productos/sincronizar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                productos: lote,
+                omitir_herramentales: !esUltimoLote
+              }),
+            });
+
+            const resultado = await respuesta.json();
+            if (!respuesta.ok) {
+              throw new Error(resultado.error || 'Error en lote de productos');
+            }
+
+            totalInsertados += Number(resultado.insertados || lote.length);
+            totalOmitidos += Number(resultado.omitidos || 0);
+            if (resultado.resumenHerramentales) {
+              resumenFinalHerramentales = resultado.resumenHerramentales;
+            }
           }
+
+          setProgresoCarga({ activo: false, porcentaje: 0, detalle: '' });
+          alert(
+            `✅ [Base de PRODUCTOS Sincronizada]\n` +
+            `📦 Productos procesados: ${totalInsertados}\n` +
+            `⚠️ Omitidos: ${totalOmitidos}` +
+            `${resumenFinalHerramentales}`
+          );
+          cargarPedidosDesdeBD();
         } catch (error) {
-          alert('❌ Error de conexión al subir Productos.');
+          setProgresoCarga({ activo: false, porcentaje: 0, detalle: '' });
+          alert(`❌ Error al subir Productos: ${error.message}`);
         }
         return;
       }
@@ -454,21 +529,31 @@ export default function PantallaProgramador() {
       }
 
       try {
+        setProgresoCarga({
+          activo: true,
+          porcentaje: 50,
+          detalle: `📋 Sincronizando ${payloadPedidos.length} órdenes de producción...`
+        });
+
         if (productosDesdePedidosMap.size > 0) {
-          await apiFetch('/api/productos/sincronizar', {
+          await enviarConReintento('/api/productos/sincronizar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ productos: Array.from(productosDesdePedidosMap.values()) })
+            body: JSON.stringify({
+              productos: Array.from(productosDesdePedidosMap.values()),
+              omitir_herramentales: true
+            })
           }).catch(() => {});
         }
 
-        const respuesta = await apiFetch('/api/pedidos/sincronizar', {
+        const respuesta = await enviarConReintento('/api/pedidos/sincronizar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pedidos: payloadPedidos }),
         });
 
         const resultado = await respuesta.json();
+        setProgresoCarga({ activo: false, porcentaje: 0, detalle: '' });
 
         if (respuesta.ok) {
           alert(`✅ [Base de PEDIDOS]\n${resultado.mensaje}`);
@@ -477,6 +562,7 @@ export default function PantallaProgramador() {
           alert(`❌ Error en BD Pedidos: ${resultado.error}`);
         }
       } catch (error) {
+        setProgresoCarga({ activo: false, porcentaje: 0, detalle: '' });
         alert('❌ Error crítico de conexión con el servidor.');
       }
     };
@@ -516,6 +602,23 @@ export default function PantallaProgramador() {
     if (!pedidoAEnviar || !pedidoAEnviar.maquina) {
       alert("⚠️ Debe asignar una Máquina Destino antes de enviar la orden a planta.");
       return;
+    }
+
+    // 🛡️ POKA-YOKE: Verificamos si Alistamiento reportó el Clisé o Troquel en Taller / Reparación
+    const infoHerr = mapaHerramentales[String(id)];
+    if (infoHerr) {
+      const cliseEnTaller = infoHerr.estado_alistamiento_clise === 'En Reparación';
+      const troquelEnTaller = infoHerr.estado_alistamiento_troquel === 'En Reparación';
+
+      if (cliseEnTaller || troquelEnTaller) {
+        const alertaTaller = window.confirm(
+          `🚨 ALERTA POKA-YOKE DE ALISTAMIENTO (Orden #${id}):\n\n` +
+          `${cliseEnTaller ? `• El Clisé (${infoHerr.codigo_clise}) figura EN REPARACIÓN / FALTANTE.\n` : ''}` +
+          `${troquelEnTaller ? `• El Troquel (${infoHerr.codigo_troquel}) figura EN REPARACIÓN / TALLER.\n` : ''}\n` +
+          `¿Seguro que querés enviar esta orden a ${pedidoAEnviar.maquina} de todos modos?`
+        );
+        if (!alertaTaller) return;
+      }
     }
 
     const nuevosPedidos = pedidos.map(p => p.id === id ? { ...p, estado: 'Habilitada' } : p);
@@ -628,6 +731,53 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 Renderiza el Semáforo Poka-Yoke de Alistamiento para cada orden
+  const renderSemaforoHerramental = (idOrden) => {
+    const info = mapaHerramentales[String(idOrden)];
+    if (!info) {
+      return <span style={{ color: '#adb5bd', fontSize: '0.78rem' }}>—</span>;
+    }
+
+    const sinClise = !info.codigo_clise || info.codigo_clise.toUpperCase().includes('SIN IMPRESION');
+    const sinTroquel = !info.codigo_troquel;
+
+    const badgeColor = (estado) => {
+      if (estado === 'Listo en Máquina') return { bg: '#d1fae5', text: '#065f46', icon: '✅' };
+      if (estado === 'En Reparación') return { bg: '#fee2e2', text: '#991b1b', icon: '🚫' };
+      if (estado === 'En Alistamiento') return { bg: '#e0f2fe', text: '#075985', icon: '🧹' };
+      return { bg: '#fef3c7', text: '#92400e', icon: '⏳' };
+    };
+
+    const cBadge = badgeColor(info.estado_alistamiento_clise);
+    const tBadge = badgeColor(info.estado_alistamiento_troquel);
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', textAlign: 'left' }}>
+        {sinClise ? (
+          <span style={{ color: '#6c757d' }}>🎨 Liso (S/Imp.)</span>
+        ) : (
+          <span
+            style={{ backgroundColor: cBadge.bg, color: cBadge.text, padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+            title={`Clisé ${info.codigo_clise} (${info.ubic_clise || 'S/U'}): ${info.estado_alistamiento_clise}`}
+          >
+            {cBadge.icon} Clisé: {info.codigo_clise} ({info.ubic_clise || 'S/U'})
+          </span>
+        )}
+
+        {sinTroquel ? (
+          <span style={{ color: '#6c757d' }}>🔪 Slotter (S/Troq.)</span>
+        ) : (
+          <span
+            style={{ backgroundColor: tBadge.bg, color: tBadge.text, padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+            title={`Troquel ${info.codigo_troquel} (${info.ubic_troquel || 'S/U'}): ${info.estado_alistamiento_troquel}`}
+          >
+            {tBadge.icon} Troq: {info.codigo_troquel} ({info.ubic_troquel || 'S/U'})
+          </span>
+        )}
+      </div>
+    );
+  };
+
   // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA (EXCLUSIVO CONVERSIÓN: JS, SS, WARD)
   const pedidosFiltrados = listaBase.filter(p => {
     if (filtroMaquina === 'TODAS') return true;
@@ -637,13 +787,13 @@ export default function PantallaProgramador() {
   const cantidadCerradasEnCero = pedidosOcultos.filter(p => p.cantidad_fabricada <= 0).length;
 
   return (
-    <div style={{ padding: '2rem', width: '100%', maxWidth: '1100px', fontFamily: 'sans-serif' }}>
+    <div style={{ padding: '2rem', width: '100%', maxWidth: '1220px', fontFamily: 'sans-serif' }}>
       
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem', borderBottom: '3px solid #17a2b8', paddingBottom: '10px' }}>
         <span style={{ fontSize: '2.5rem', marginRight: '15px' }}>💻</span>
         <div>
           <h2 style={{ color: '#17a2b8', margin: 0, fontSize: '2rem' }}>Panel de Programación de Producción</h2>
-          <small style={{ color: '#6c757d', fontWeight: 'bold' }}>Conversión de Planta · Líneas COR-JS, COR-SS y COR-WAR</small>
+          <small style={{ color: '#6c757d', fontWeight: 'bold' }}>Conversión de Planta · Líneas COR-JS, COR-SS y COR-WAR · Semáforo de Alistamiento en Vivo</small>
         </div>
       </div>
 
@@ -653,16 +803,37 @@ export default function PantallaProgramador() {
           <input 
             type="file" 
             accept=".csv" 
+            disabled={progresoCarga.activo}
             onChange={(e) => setArchivo(e.target.files[0])} 
             style={{ padding: '10px', border: '1px solid #ccc', borderRadius: '5px', flexGrow: 1 }} 
           />
           <button 
             type="submit" 
-            disabled={!archivo} 
-            style={{ padding: '12px 25px', backgroundColor: archivo ? '#17a2b8' : '#e9ecef', color: archivo ? 'white' : '#6c757d', border: 'none', borderRadius: '5px', cursor: archivo ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>
-            Procesar e Importar a BD
+            disabled={!archivo || progresoCarga.activo} 
+            style={{ padding: '12px 25px', backgroundColor: archivo && !progresoCarga.activo ? '#17a2b8' : '#e9ecef', color: archivo && !progresoCarga.activo ? 'white' : '#6c757d', border: 'none', borderRadius: '5px', cursor: archivo && !progresoCarga.activo ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>
+            {progresoCarga.activo ? '⏳ Procesando por Lotes...' : 'Procesar e Importar a BD'}
           </button>
         </form>
+
+        {/* 🚀 BARRA DE PROGRESO TURBO BATCH */}
+        {progresoCarga.activo && (
+          <div style={{ marginTop: '1rem', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '0.9rem', color: '#0f172a', marginBottom: '6px' }}>
+              <span>{progresoCarga.detalle}</span>
+              <span>{progresoCarga.porcentaje}%</span>
+            </div>
+            <div style={{ width: '100%', height: '12px', backgroundColor: '#e2e8f0', borderRadius: '6px', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${progresoCarga.porcentaje}%`,
+                  height: '100%',
+                  backgroundColor: '#17a2b8',
+                  transition: 'width 0.25s ease'
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: mostrarCerradas ? '5px solid #fd7e14' : '5px solid #ffc107' }}>
@@ -674,7 +845,6 @@ export default function PantallaProgramador() {
                 : '2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)'}
             </h3>
 
-            {/* Botón para alternar entre la Cola Activa y las Órdenes Cerradas (para revivir) */}
             <button
               onClick={() => setMostrarCerradas(!mostrarCerradas)}
               style={{
@@ -723,7 +893,7 @@ export default function PantallaProgramador() {
           </div>
         </div>
         
-        <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+        <div style={{ maxHeight: '620px', overflowY: 'auto' }}>
           <DragDropContext onDragEnd={handleDragEnd}>
             <Droppable droppableId="lista-pedidos">
               {(provided) => (
@@ -736,8 +906,8 @@ export default function PantallaProgramador() {
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                     <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
                       <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Puesto / N° Orden</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Producto</th>
+                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente / Producto</th>
+                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057', backgroundColor: '#eef6ff' }}>🛠️ Alistamiento (Clisé / Troquel)</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057' }}>Estado</th>
                       <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057' }}>Acción</th>
@@ -754,6 +924,11 @@ export default function PantallaProgramador() {
                     ) : (
                       pedidosFiltrados.map((pedido, index) => {
                         const cerradaEnCero = mostrarCerradas && pedido.cantidad_fabricada <= 0;
+                        const infoHerr = mapaHerramentales[String(pedido.id)];
+                        const bloqueadaPorTaller =
+                          infoHerr &&
+                          (infoHerr.estado_alistamiento_clise === 'En Reparación' ||
+                           infoHerr.estado_alistamiento_troquel === 'En Reparación');
 
                         return (
                           <Draggable 
@@ -769,7 +944,13 @@ export default function PantallaProgramador() {
                                 {...provided.dragHandleProps}
                                 style={{ 
                                   borderBottom: '1px solid #dee2e6',
-                                  backgroundColor: snapshot.isDragging ? '#e3f2fd' : (cerradaEnCero ? '#fff8e6' : 'white'),
+                                  backgroundColor: snapshot.isDragging
+                                    ? '#e3f2fd'
+                                    : bloqueadaPorTaller
+                                    ? '#fff5f5'
+                                    : cerradaEnCero
+                                    ? '#fff8e6'
+                                    : 'white',
                                   ...provided.draggableProps.style
                                 }}
                               >
@@ -819,8 +1000,21 @@ export default function PantallaProgramador() {
                                     <span style={{ fontSize: '1rem', color: '#333' }}>{pedido.id}</span>
                                   </div>
                                 </td>
-                                <td style={{ padding: '15px 10px' }}>{pedido.cliente}</td>
-                                <td style={{ padding: '15px 10px', fontSize: '0.9rem', color: '#555' }}>{pedido.producto}</td>
+
+                                <td style={{ padding: '12px 10px' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#212529' }}>{pedido.cliente}</div>
+                                  <div style={{ fontSize: '0.86rem', color: '#555' }}>{pedido.producto}</div>
+                                  {infoHerr?.colores && (
+                                    <div style={{ fontSize: '0.74rem', color: '#0d6efd', fontWeight: 'bold', marginTop: '2px' }}>
+                                      🎨 {infoHerr.colores}
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* 🛠️ COLUMNA SEMÁFORO DE ALISTAMIENTO */}
+                                <td style={{ padding: '10px', backgroundColor: bloqueadaPorTaller ? '#fee2e2' : '#f8fbff' }}>
+                                  {renderSemaforoHerramental(pedido.id)}
+                                </td>
                                 
                                 <td style={{ padding: '15px 10px', textAlign: 'center', backgroundColor: '#fdfdfe' }}>
                                   <select 
@@ -914,8 +1108,19 @@ export default function PantallaProgramador() {
                                   ) : pedido.estado === 'Pendiente' ? (
                                     <button 
                                       onClick={() => habilitarOrden(pedido.id)}
-                                      style={{ padding: '8px 15px', backgroundColor: '#0056b3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                                      Enviar a Planta
+                                      style={{
+                                        padding: '8px 15px',
+                                        backgroundColor: bloqueadaPorTaller ? '#dc3545' : '#0056b3',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '5px',
+                                        cursor: 'pointer',
+                                        fontWeight: 'bold',
+                                        fontSize: '0.85rem'
+                                      }}
+                                      title={bloqueadaPorTaller ? 'Atención: Herramental reportado en Reparación/Taller' : 'Enviar orden a máquina'}
+                                    >
+                                      {bloqueadaPorTaller ? '⚠️ Herr. en Taller' : 'Enviar a Planta'}
                                     </button>
                                   ) : pedido.estado === 'Finalizada Parcial' ? (
                                     <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '1.2rem' }} title="Atender decisión comercial en columna Estado">
