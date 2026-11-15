@@ -14,6 +14,10 @@ export default function PantallaMonitorTV() {
   const [velocidadInstantanea, setVelocidadInstantanea] = useState(0);
   const [operadorEnPlanta, setOperadorEnPlanta] = useState('');
 
+  // 🛠️ MAPA EN VIVO DE ALISTAMIENTO (CLISÉ / TROQUEL) DESDE EL RADAR DE COLA
+  const [mapaHerramentales, setMapaHerramentales] = useState({});
+  const [mostrarWidgetSiguiente, setMostrarWidgetSiguiente] = useState(false);
+
   // CRONÓMETROS EN VIVO DE TNP LOCALES
   const [segundosSetupVivo, setSegundosSetupVivo] = useState(0);
   const [segundosFallaVivo, setSegundosFallaVivo] = useState(0);
@@ -47,13 +51,26 @@ export default function PantallaMonitorTV() {
 
   const turnoActual = obtenerInfoTurno(relojActual);
 
-  // 2. CARGA DE DATOS Y SINCRONIZACIÓN CON EL MAQUINISTA
+  // 2. CARGA DE DATOS Y SINCRONIZACIÓN CON EL MAQUINISTA Y ALISTAMIENTO
   const cargarDatosPlanta = async (maq) => {
     try {
       let maquinasFinales = [];
       let todosLosPedidos = [];
 
-      const resPed = await apiFetch('/api/pedidos');
+      const [resPed, resRadar] = await Promise.all([
+        apiFetch('/api/pedidos'),
+        apiFetch('/api/herramentales/radar-cola').catch(() => null)
+      ]);
+
+      if (resRadar && resRadar.ok) {
+        const dataRadar = await resRadar.json();
+        const nuevoMapa = {};
+        dataRadar.forEach(item => {
+          nuevoMapa[String(item.numero_orden)] = item;
+        });
+        setMapaHerramentales(nuevoMapa);
+      }
+
       if (resPed.ok) {
         todosLosPedidos = await resPed.json();
       }
@@ -129,7 +146,6 @@ export default function PantallaMonitorTV() {
             const estadoRecibido = dataVivo.estado || 'ESPERA';
             setEstadoMaquina(estadoRecibido);
             
-            // 🎯 BLINDAJE DE CRONÓMETRO EN VIVO: Sincronizamos los segundos exactos desde la tablet
             const segundosRealesFase = Number(dataVivo.segundos_fase) || 0;
             if (estadoRecibido === 'SETUP') {
               setSegundosSetupVivo(segundosRealesFase);
@@ -142,7 +158,6 @@ export default function PantallaMonitorTV() {
               setSegundosFallaVivo(0);
             }
 
-            // 🛡️ BLINDAJE: Si la máquina está en ESPERA o en SETUP, las cajas del pedido actual DEBEN ser 0
             if (['ESPERA', 'SETUP'].includes(estadoRecibido)) {
               setCajasPedidoActual(0);
             } else {
@@ -171,10 +186,12 @@ export default function PantallaMonitorTV() {
   const maquinaActivaObj = listaMaquinas.find(m => m.codigo_maquina === maquinaSeleccionada) || {};
   const VELOCIDAD_ESTANDAR = Number(maquinaActivaObj.velocidad_estandar) || 120;
 
-  // ORDEN EN CURSO
+  // ORDEN EN CURSO (PUESTO #1) Y ORDEN SIGUIENTE (PUESTO #2)
   const primeraOrdenCola = colaPedidos.length > 0 ? colaPedidos[0] : null;
+  const segundaOrdenCola = colaPedidos.length > 1 ? colaPedidos[1] : null;
 
   const ordenEnCurso = primeraOrdenCola ? {
+    id: primeraOrdenCola.id,
     numero_orden: primeraOrdenCola.numero_orden || primeraOrdenCola.id,
     cliente: primeraOrdenCola.cliente || 'Sin cliente',
     producto_descripcion: primeraOrdenCola.producto_descripcion || primeraOrdenCola.descripcion_producto || 'Sin descripción',
@@ -184,6 +201,7 @@ export default function PantallaMonitorTV() {
     m2_tot: Number(primeraOrdenCola.m2_totales_orden || primeraOrdenCola.m2_tot) || 0,
     ruta_asignada: primeraOrdenCola.maquina_asignada || ''
   } : {
+    id: null,
     numero_orden: '---',
     cliente: 'SIN ÓRDENES EN COLA PARA ESTA MÁQUINA',
     producto_descripcion: 'Asigne órdenes a esta ruta en el Panel del Programador',
@@ -193,6 +211,17 @@ export default function PantallaMonitorTV() {
     m2_tot: 0,
     ruta_asignada: ''
   };
+
+  // DATOS DE LA ORDEN SIGUIENTE (PUESTO #2)
+  const ordenSiguiente = segundaOrdenCola ? {
+    id: segundaOrdenCola.id,
+    numero_orden: segundaOrdenCola.numero_orden || segundaOrdenCola.id,
+    cliente: segundaOrdenCola.cliente || 'Sin cliente',
+    producto_descripcion: segundaOrdenCola.producto_descripcion || segundaOrdenCola.descripcion_producto || 'Sin descripción',
+    cantidad_programada: Number(segundaOrdenCola.cantidad_programada) || 0
+  } : null;
+
+  const infoHerramentalSiguiente = ordenSiguiente ? mapaHerramentales[String(ordenSiguiente.id || ordenSiguiente.numero_orden)] : null;
 
   // MULTIPLICADOR DE SALIDAS (X1, X2, X3...)
   const obtenerMultiplicadorRuta = (rutaOrden, maqMonitorizada) => {
@@ -257,7 +286,6 @@ export default function PantallaMonitorTV() {
     return esMismaMaquina && fechaReg.toDateString() === hoyStr;
   });
 
-  // 🛠️ FILTRO BLINDADO: Detecta cualquier variante de Set-Up o Cambio de Orden
   const esSetupParada = (codigo) => {
     const c = (codigo || '').toLowerCase();
     return c.includes('set-up') || c.includes('setup') || c.includes('cambio de orden') || c.includes('alistamiento');
@@ -303,8 +331,14 @@ export default function PantallaMonitorTV() {
     return '#ef4444';
   };
 
+  // Verificamos si el herramental del siguiente está listo
+  const cliseListo = infoHerramentalSiguiente?.estado_alistamiento_clise === 'Listo en Máquina';
+  const troquelListo = infoHerramentalSiguiente?.estado_alistamiento_troquel === 'Listo en Máquina';
+  const herramentalSiguienteOk = cliseListo && troquelListo;
+  const ordenActualAvanzada = porcentajePedido >= 80;
+
   return (
-    <div style={{ backgroundColor: '#0f172a', color: 'white', minHeight: '100vh', width: '100%', padding: '1.5rem', fontFamily: 'sans-serif', border: `8px solid ${configEstado.color}`, boxSizing: 'border-box' }}>
+    <div style={{ backgroundColor: '#0f172a', color: 'white', minHeight: '100vh', width: '100%', padding: '1.5rem', fontFamily: 'sans-serif', border: `8px solid ${configEstado.color}`, boxSizing: 'border-box', position: 'relative' }}>
       
       {/* BARRA SUPERIOR */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', padding: '1rem 1.5rem', borderRadius: '12px', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
@@ -470,6 +504,81 @@ export default function PantallaMonitorTV() {
           </div>
         </div>
 
+      </div>
+
+      {/* 🔔 WIDGET FLOTANTE NO INVASIVO: ORDEN SIGUIENTE & ALISTAMIENTO */}
+      <div style={{ position: 'fixed', bottom: '20px', right: '20px', zIndex: 9999, fontFamily: 'sans-serif' }}>
+        {ordenSiguiente ? (
+          <div 
+            style={{ 
+              backgroundColor: '#1e293b', 
+              border: `2px solid ${herramentalSiguienteOk ? '#10b981' : (ordenActualAvanzada ? '#f59e0b' : '#38bdf8')}`, 
+              borderRadius: '12px', 
+              boxShadow: '0 10px 25px rgba(0,0,0,0.5)', 
+              width: mostrarWidgetSiguiente ? '360px' : 'auto',
+              overflow: 'hidden',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            {/* Barra superior de la píldora flotante */}
+            <div 
+              onClick={() => setMostrarWidgetSiguiente(!mostrarWidgetSiguiente)}
+              style={{ 
+                backgroundColor: herramentalSiguienteOk ? '#064e3b' : (ordenActualAvanzada ? '#78350f' : '#0f172a'), 
+                padding: '10px 15px', 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                cursor: 'pointer',
+                gap: '10px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.2rem' }}>{herramentalSiguienteOk ? '✅' : '⏳'}</span>
+                <div>
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block', textTransform: 'uppercase', fontWeight: 'bold' }}>Siguiente Orden (#2)</span>
+                  <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: 'white' }}>OP #{ordenSiguiente.numero_orden}</span>
+                </div>
+              </div>
+              <button 
+                style={{ background: 'transparent', border: 'none', color: '#38bdf8', fontSize: '0.85rem', fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                {mostrarWidgetSiguiente ? '▲ Ocultar' : '▼ Ver Setup'}
+              </button>
+            </div>
+
+            {/* Contenido desplegable detallado */}
+            {mostrarWidgetSiguiente && (
+              <div style={{ padding: '12px 15px', backgroundColor: '#1e293b', fontSize: '0.88rem', borderTop: '1px solid #334155' }}>
+                <p style={{ margin: '0 0 6px 0', color: '#e2e8f0', fontWeight: 'bold' }}>{ordenSiguiente.cliente}</p>
+                <p style={{ margin: '0 0 10px 0', color: '#fde047', fontSize: '0.82rem' }}>{ordenSiguiente.producto_descripcion}</p>
+                
+                <div style={{ backgroundColor: '#0f172a', padding: '8px 10px', borderRadius: '6px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ color: '#94a3b8' }}>🎨 Clisé:</span>
+                    <strong style={{ color: cliseListo ? '#10b981' : '#f59e0b' }}>
+                      {infoHerramentalSiguiente?.codigo_clise || 'S/Clisé'} ({infoHerramentalSiguiente?.estado_alistamiento_clise || 'Pendiente'})
+                    </strong>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#94a3b8' }}>🔪 Troquel:</span>
+                    <strong style={{ color: troquelListo ? '#10b981' : '#f59e0b' }}>
+                      {infoHerramentalSiguiente?.codigo_troquel || 'S/Troquel'} ({infoHerramentalSiguiente?.estado_alistamiento_troquel || 'Pendiente'})
+                    </strong>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'center', fontSize: '0.78rem', color: herramentalSiguienteOk ? '#10b981' : '#f59e0b', fontWeight: 'bold' }}>
+                  {herramentalSiguienteOk ? '✅ Herramental listo a pie de máquina' : '⚠️ Alistamiento en curso o pendiente'}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', padding: '8px 14px', borderRadius: '8px', fontSize: '0.8rem', color: '#94a3b8' }}>
+            ℹ️ No hay orden siguiente en cola
+          </div>
+        )}
       </div>
 
     </div>
