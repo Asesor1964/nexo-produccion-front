@@ -731,7 +731,7 @@ export default function PantallaProgramador() {
     }
   };
 
-  // 🎯 Renderiza el Semáforo Poka-Yoke de Alistamiento para cada orden
+  // 🎯 Renderiza el Semáforo Poka-Yoke de Alistamiento para cada orden (Responsivo)
   const renderSemaforoHerramental = (idOrden) => {
     const info = mapaHerramentales[String(idOrden)];
     if (!info) {
@@ -752,12 +752,21 @@ export default function PantallaProgramador() {
     const tBadge = badgeColor(info.estado_alistamiento_troquel);
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', textAlign: 'left' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.74rem', textAlign: 'left' }}>
         {sinClise ? (
           <span style={{ color: '#6c757d' }}>🎨 Liso (S/Imp.)</span>
         ) : (
           <span
-            style={{ backgroundColor: cBadge.bg, color: cBadge.text, padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+            style={{
+              backgroundColor: cBadge.bg,
+              color: cBadge.text,
+              padding: '3px 6px',
+              borderRadius: '4px',
+              fontWeight: 'bold',
+              display: 'inline-block',
+              lineHeight: 1.25,
+              wordBreak: 'break-word'
+            }}
             title={`Clisé ${info.codigo_clise} (${info.ubic_clise || 'S/U'}): ${info.estado_alistamiento_clise}`}
           >
             {cBadge.icon} Clisé: {info.codigo_clise} ({info.ubic_clise || 'S/U'})
@@ -768,7 +777,16 @@ export default function PantallaProgramador() {
           <span style={{ color: '#6c757d' }}>🔪 Slotter (S/Troq.)</span>
         ) : (
           <span
-            style={{ backgroundColor: tBadge.bg, color: tBadge.text, padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+            style={{
+              backgroundColor: tBadge.bg,
+              color: tBadge.text,
+              padding: '3px 6px',
+              borderRadius: '4px',
+              fontWeight: 'bold',
+              display: 'inline-block',
+              lineHeight: 1.25,
+              wordBreak: 'break-word'
+            }}
             title={`Troquel ${info.codigo_troquel} (${info.ubic_troquel || 'S/U'}): ${info.estado_alistamiento_troquel}`}
           >
             {tBadge.icon} Troq: {info.codigo_troquel} ({info.ubic_troquel || 'S/U'})
@@ -787,30 +805,32 @@ export default function PantallaProgramador() {
   const cantidadCerradasEnCero = pedidosOcultos.filter(p => p.cantidad_fabricada <= 0).length;
 
   return (
-    <div style={{ padding: '2rem', width: '100%', maxWidth: '1220px', fontFamily: 'sans-serif' }}>
+    <div style={{ padding: '1.2rem 1.5rem', width: '100%', maxWidth: '1400px', margin: '0 auto', boxSizing: 'border-box', fontFamily: 'sans-serif' }}>
       
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem', borderBottom: '3px solid #17a2b8', paddingBottom: '10px' }}>
-        <span style={{ fontSize: '2.5rem', marginRight: '15px' }}>💻</span>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '3px solid #17a2b8', paddingBottom: '10px' }}>
+        <span style={{ fontSize: '2.3rem', marginRight: '14px' }}>💻</span>
         <div>
-          <h2 style={{ color: '#17a2b8', margin: 0, fontSize: '2rem' }}>Panel de Programación de Producción</h2>
+          <h2 style={{ color: '#17a2b8', margin: 0, fontSize: '1.85rem' }}>Panel de Programación de Producción</h2>
           <small style={{ color: '#6c757d', fontWeight: 'bold' }}>Conversión de Planta · Líneas COR-JS, COR-SS y COR-WAR · Semáforo de Alistamiento en Vivo</small>
         </div>
       </div>
 
-      <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '2rem', borderLeft: '5px solid #6c757d' }}>
-        <h3 style={{ marginTop: 0, color: '#343a40' }}>Actualizar Base de Datos (Maestro_pedidos.csv / Maestro_Productos.csv)</h3>
-        <form onSubmit={procesarCSV} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+      <div style={{ backgroundColor: 'white', padding: '1.3rem 1.5rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '1.5rem', borderLeft: '5px solid #6c757d', boxSizing: 'border-box' }}>
+        <h3 style={{ marginTop: 0, marginBottom: '0.8rem', color: '#343a40', fontSize: '1.05rem' }}>
+          Actualizar Base de Datos (Maestro_pedidos.csv / Maestro_Productos.csv)
+        </h3>
+        <form onSubmit={procesarCSV} style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input 
             type="file" 
             accept=".csv" 
             disabled={progresoCarga.activo}
             onChange={(e) => setArchivo(e.target.files[0])} 
-            style={{ padding: '10px', border: '1px solid #ccc', borderRadius: '5px', flexGrow: 1 }} 
+            style={{ padding: '9px', border: '1px solid #ccc', borderRadius: '5px', flex: '1 1 260px' }} 
           />
           <button 
             type="submit" 
             disabled={!archivo || progresoCarga.activo} 
-            style={{ padding: '12px 25px', backgroundColor: archivo && !progresoCarga.activo ? '#17a2b8' : '#e9ecef', color: archivo && !progresoCarga.activo ? 'white' : '#6c757d', border: 'none', borderRadius: '5px', cursor: archivo && !progresoCarga.activo ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}>
+            style={{ padding: '11px 22px', backgroundColor: archivo && !progresoCarga.activo ? '#17a2b8' : '#e9ecef', color: archivo && !progresoCarga.activo ? 'white' : '#6c757d', border: 'none', borderRadius: '5px', cursor: archivo && !progresoCarga.activo ? 'pointer' : 'not-allowed', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
             {progresoCarga.activo ? '⏳ Procesando por Lotes...' : 'Procesar e Importar a BD'}
           </button>
         </form>
@@ -836,10 +856,10 @@ export default function PantallaProgramador() {
         )}
       </div>
 
-      <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: mostrarCerradas ? '5px solid #fd7e14' : '5px solid #ffc107' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+      <div style={{ backgroundColor: 'white', padding: '1.3rem 1.5rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: mostrarCerradas ? '5px solid #fd7e14' : '5px solid #ffc107', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <h3 style={{ margin: 0, color: '#343a40' }}>
+            <h3 style={{ margin: 0, color: '#343a40', fontSize: '1.15rem' }}>
               {mostrarCerradas
                 ? '🚑 Órdenes Cerradas / En Expedición (Modo Rescate)'
                 : '2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)'}
@@ -893,7 +913,7 @@ export default function PantallaProgramador() {
           </div>
         </div>
         
-        <div style={{ maxHeight: '620px', overflowY: 'auto' }}>
+        <div style={{ maxHeight: '640px', overflowY: 'auto', overflowX: 'hidden', width: '100%' }}>
           <DragDropContext onDragEnd={handleDragEnd}>
             <Droppable droppableId="lista-pedidos">
               {(provided) => (
@@ -901,16 +921,24 @@ export default function PantallaProgramador() {
                   className="table table-hover" 
                   {...provided.droppableProps} 
                   ref={provided.innerRef}
-                  style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}
+                  style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', marginTop: '0.5rem' }}
                 >
+                  <colgroup>
+                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '25%' }} />
+                    <col style={{ width: '25%' }} />
+                    <col style={{ width: '13%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '12%' }} />
+                  </colgroup>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                    <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Puesto / N° Orden</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057' }}>Cliente / Producto</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'left', color: '#495057', backgroundColor: '#eef6ff' }}>🛠️ Alistamiento (Clisé / Troquel)</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057' }}>Estado</th>
-                      <th style={{ padding: '15px 10px', textAlign: 'center', color: '#495057' }}>Acción</th>
+                    <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #dee2e6', fontSize: '0.86rem' }}>
+                      <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Puesto / Orden</th>
+                      <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Cliente / Producto</th>
+                      <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057', backgroundColor: '#eef6ff' }}>🛠️ Alistamiento (Clisé / Troquel)</th>
+                      <th style={{ padding: '12px 6px', textAlign: 'center', color: '#495057', backgroundColor: '#e9ecef' }}>Máquina Destino</th>
+                      <th style={{ padding: '12px 6px', textAlign: 'center', color: '#495057' }}>Estado</th>
+                      <th style={{ padding: '12px 6px', textAlign: 'center', color: '#495057' }}>Acción</th>
                     </tr>
                   </thead>
                   
@@ -954,14 +982,14 @@ export default function PantallaProgramador() {
                                   ...provided.draggableProps.style
                                 }}
                               >
-                                <td style={{ padding: '12px 10px', fontWeight: 'bold' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <td style={{ padding: '10px 6px', fontWeight: 'bold' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
                                     {!mostrarCerradas && (
                                       <>
-                                        <span style={{ cursor: 'grab', color: '#aaa', fontSize: '1.1rem' }} title="Arrastrar fila">☰</span>
+                                        <span style={{ cursor: 'grab', color: '#aaa', fontSize: '1rem' }} title="Arrastrar fila">☰</span>
                                         
-                                        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '5px', padding: '2px 5px' }} title="Escribí el puesto deseado y presioná Enter">
-                                          <span style={{ fontSize: '0.75rem', color: '#856404', marginRight: '2px', fontWeight: 'bold' }}>#</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff3cd', border: '1px solid #ffc107', borderRadius: '5px', padding: '2px 4px' }} title="Escribí el puesto deseado y presioná Enter">
+                                          <span style={{ fontSize: '0.72rem', color: '#856404', marginRight: '1px', fontWeight: 'bold' }}>#</span>
                                           <input
                                             key={`pos-${pedido.id}-${index}`}
                                             type="number"
@@ -983,10 +1011,10 @@ export default function PantallaProgramador() {
                                               }
                                             }}
                                             style={{
-                                              width: '42px',
+                                              width: '36px',
                                               textAlign: 'center',
                                               fontWeight: 'bold',
-                                              fontSize: '0.85rem',
+                                              fontSize: '0.82rem',
                                               border: 'none',
                                               backgroundColor: 'transparent',
                                               color: '#212529',
@@ -997,36 +1025,36 @@ export default function PantallaProgramador() {
                                       </>
                                     )}
 
-                                    <span style={{ fontSize: '1rem', color: '#333' }}>{pedido.id}</span>
+                                    <span style={{ fontSize: '0.92rem', color: '#333' }}>{pedido.id}</span>
                                   </div>
                                 </td>
 
-                                <td style={{ padding: '12px 10px' }}>
-                                  <div style={{ fontWeight: 'bold', color: '#212529' }}>{pedido.cliente}</div>
-                                  <div style={{ fontSize: '0.86rem', color: '#555' }}>{pedido.producto}</div>
+                                <td style={{ padding: '10px 8px', wordWrap: 'break-word' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#212529', fontSize: '0.88rem', lineHeight: 1.2 }}>{pedido.cliente}</div>
+                                  <div style={{ fontSize: '0.8rem', color: '#555', marginTop: '2px', lineHeight: 1.2 }}>{pedido.producto}</div>
                                   {infoHerr?.colores && (
-                                    <div style={{ fontSize: '0.74rem', color: '#0d6efd', fontWeight: 'bold', marginTop: '2px' }}>
+                                    <div style={{ fontSize: '0.73rem', color: '#0d6efd', fontWeight: 'bold', marginTop: '3px' }}>
                                       🎨 {infoHerr.colores}
                                     </div>
                                   )}
                                 </td>
 
                                 {/* 🛠️ COLUMNA SEMÁFORO DE ALISTAMIENTO */}
-                                <td style={{ padding: '10px', backgroundColor: bloqueadaPorTaller ? '#fee2e2' : '#f8fbff' }}>
+                                <td style={{ padding: '8px', backgroundColor: bloqueadaPorTaller ? '#fee2e2' : '#f8fbff' }}>
                                   {renderSemaforoHerramental(pedido.id)}
                                 </td>
                                 
-                                <td style={{ padding: '15px 10px', textAlign: 'center', backgroundColor: '#fdfdfe' }}>
+                                <td style={{ padding: '10px 6px', textAlign: 'center', backgroundColor: '#fdfdfe' }}>
                                   <select 
                                     value={pedido.maquina}
                                     onChange={(e) => cambiarMaquina(pedido.id, e.target.value)}
                                     style={{ 
-                                      padding: '8px', borderRadius: '5px', border: '2px solid #ccc', 
-                                      fontSize: '0.9rem', fontWeight: 'bold', color: pedido.maquina ? '#0056b3' : '#dc3545',
-                                      outline: 'none', cursor: 'pointer'
+                                      width: '100%', maxWidth: '140px', padding: '6px 4px', borderRadius: '5px', border: '2px solid #ccc', 
+                                      fontSize: '0.82rem', fontWeight: 'bold', color: pedido.maquina ? '#0056b3' : '#dc3545',
+                                      outline: 'none', cursor: 'pointer', boxSizing: 'border-box'
                                     }}
                                   >
-                                    <option value="" disabled>-- Asignar Ruta --</option>
+                                    <option value="" disabled>-- Ruta --</option>
                                     {rutasUnicasPlanta.map((ruta) => (
                                       <option key={ruta} value={ruta}>
                                         {ruta}
@@ -1035,111 +1063,116 @@ export default function PantallaProgramador() {
                                   </select>
                                 </td>
                                 
-                                <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                <td style={{ padding: '10px 4px', textAlign: 'center' }}>
                                   <span style={{ 
-                                    padding: '6px 12px', borderRadius: '20px', 
+                                    display: 'inline-block',
+                                    padding: '5px 10px', borderRadius: '20px', 
                                     backgroundColor: pedido.estado === 'Pendiente' ? '#ffefb3' : (pedido.estado === 'Finalizada Parcial' ? '#f8d7da' : '#d4edda'),
                                     color: pedido.estado === 'Pendiente' ? '#856404' : (pedido.estado === 'Finalizada Parcial' ? '#721c24' : '#155724'),
-                                    fontWeight: 'bold', fontSize: '0.85rem'
+                                    fontWeight: 'bold', fontSize: '0.78rem'
                                   }}>
                                     {pedido.estado}
                                   </span>
 
                                   {mostrarCerradas && (
-                                    <div style={{ marginTop: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: cerradaEnCero ? '#d9480f' : '#495057' }}>
+                                    <div style={{ marginTop: '5px', fontSize: '0.72rem', fontWeight: 'bold', color: cerradaEnCero ? '#d9480f' : '#495057' }}>
                                       {cerradaEnCero
-                                        ? '⚠️ CERRADA EN 0 CAJAS (Prueba / Sin procesar)'
-                                        : `Fabricadas: ${pedido.cantidad_fabricada} / ${pedido.cantidad_programada} caj.`}
+                                        ? '⚠️ EN 0 CAJAS'
+                                        : `${pedido.cantidad_fabricada}/${pedido.cantidad_programada}`}
                                     </div>
                                   )}
 
                                   {pedido.estado === 'Finalizada Parcial' && !mostrarCerradas && (
-                                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
+                                    <div style={{ marginTop: '6px', padding: '6px', backgroundColor: '#fdf2f2', border: '1px solid #f5c6cb', borderRadius: '6px', textAlign: 'center' }}>
                                       <span style={{ 
                                         backgroundColor: '#dc3545', 
                                         color: 'white', 
-                                        padding: '4px 8px', 
+                                        padding: '3px 6px', 
                                         borderRadius: '4px', 
                                         fontWeight: 'bold', 
-                                        fontSize: '0.75rem',
+                                        fontSize: '0.7rem',
                                         display: 'inline-block',
-                                        marginBottom: '6px'
+                                        marginBottom: '4px'
                                       }}>
-                                        ⚠️ FALTANTE: {pedido.cantidad_faltante} caj.
+                                        ⚠️ FALTAN: {pedido.cantidad_faltante}
                                       </span>
 
-                                      <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
                                         <button 
                                           onClick={() => gestionarFaltante(pedido, 'reprogramar')}
-                                          style={{ padding: '4px 8px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                          style={{ padding: '3px 6px', backgroundColor: '#ffc107', color: '#000', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 'bold', cursor: 'pointer' }}
                                           title="Generar nueva orden o sumar a cola por el saldo pendiente">
-                                          🔄 Reprogramar
+                                          🔄 Reprog.
                                         </button>
 
                                         <button 
                                           onClick={() => gestionarFaltante(pedido, 'cerrar')}
-                                          style={{ padding: '4px 8px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                          style={{ padding: '3px 6px', backgroundColor: '#6c757d', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 'bold', cursor: 'pointer' }}
                                           title="Cerrar definitivamente por acuerdo comercial con el cliente">
-                                          📁 Archivar / Cerrar
+                                          📁 Cerrar
                                         </button>
                                       </div>
                                     </div>
                                   )}
                                 </td>
                                 
-                                <td style={{ padding: '15px 10px', textAlign: 'center' }}>
+                                <td style={{ padding: '10px 6px', textAlign: 'center' }}>
                                   {mostrarCerradas ? (
                                     <button
                                       onClick={() => revivirOrden(pedido)}
                                       style={{
-                                        padding: '7px 14px',
+                                        width: '100%',
+                                        padding: '7px 8px',
                                         backgroundColor: cerradaEnCero ? '#fd7e14' : '#17a2b8',
                                         color: 'white',
                                         border: 'none',
                                         borderRadius: '5px',
                                         cursor: 'pointer',
                                         fontWeight: 'bold',
-                                        fontSize: '0.82rem'
+                                        fontSize: '0.76rem'
                                       }}
                                       title="Sacar de Expedición y devolver a la cola activa como Pendiente"
                                     >
-                                      🚑 Revivir a Cola
+                                      🚑 Revivir
                                     </button>
                                   ) : pedido.estado === 'Pendiente' ? (
                                     <button 
                                       onClick={() => habilitarOrden(pedido.id)}
                                       style={{
-                                        padding: '8px 15px',
+                                        width: '100%',
+                                        padding: '7px 8px',
                                         backgroundColor: bloqueadaPorTaller ? '#dc3545' : '#0056b3',
                                         color: 'white',
                                         border: 'none',
                                         borderRadius: '5px',
                                         cursor: 'pointer',
                                         fontWeight: 'bold',
-                                        fontSize: '0.85rem'
+                                        fontSize: '0.78rem',
+                                        lineHeight: 1.2
                                       }}
                                       title={bloqueadaPorTaller ? 'Atención: Herramental reportado en Reparación/Taller' : 'Enviar orden a máquina'}
                                     >
-                                      {bloqueadaPorTaller ? '⚠️ Herr. en Taller' : 'Enviar a Planta'}
+                                      {bloqueadaPorTaller ? '⚠️ Herr. Taller' : 'Enviar a Planta'}
                                     </button>
                                   ) : pedido.estado === 'Finalizada Parcial' ? (
                                     <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '1.2rem' }} title="Atender decisión comercial en columna Estado">
                                       ⚡
                                     </span>
                                   ) : (
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                      <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '1.1rem' }} title="En planta">✓</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                                      <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '0.75rem' }}>✓ En Planta</span>
                                       <button
                                         onClick={() => darPorCumplida(pedido)}
                                         style={{
-                                          padding: '5px 10px',
+                                          width: '100%',
+                                          padding: '5px 6px',
                                           backgroundColor: '#198754',
                                           color: 'white',
                                           border: 'none',
                                           borderRadius: '4px',
                                           cursor: 'pointer',
                                           fontWeight: 'bold',
-                                          fontSize: '0.75rem'
+                                          fontSize: '0.74rem'
                                         }}
                                         title="Marcar como ya fabricada y quitar de la cola"
                                       >
