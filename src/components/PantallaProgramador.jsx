@@ -31,6 +31,14 @@ export default function PantallaProgramador() {
     detalle: ''
   });
 
+  // 🎯 MODAL EMERGENTE: "LLAMAR ORDEN Y ASIGNAR PUESTO"
+  const [modalLlamarAbierto, setModalLlamarAbierto] = useState(false);
+  const [busquedaRapidaOrden, setBusquedaRapidaOrden] = useState('');
+  const [ordenLlamadaSeleccionada, setOrdenLlamadaSeleccionada] = useState(null);
+  const [nuevoPuestoModal, setNuevoPuestoModal] = useState('');
+  const [habilitarAlMover, setHabilitarAlMover] = useState(false);
+  const [mensajeExitoModal, setMensajeExitoModal] = useState('');
+
   const cargarPedidosDesdeBD = async () => {
     try {
       const [respuesta, resRadar] = await Promise.all([
@@ -94,6 +102,21 @@ export default function PantallaProgramador() {
   useEffect(() => {
     cargarPedidosDesdeBD();
   }, []);
+
+  // Atajo de teclado Ctrl + B para abrir el Llamador Rápido de Órdenes
+  useEffect(() => {
+    const manejarTecla = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setMostrarCerradas(false);
+        setModalLlamarAbierto(prev => !prev);
+      } else if (e.key === 'Escape' && modalLlamarAbierto) {
+        setModalLlamarAbierto(false);
+      }
+    };
+    window.addEventListener('keydown', manejarTecla);
+    return () => window.removeEventListener('keydown', manejarTecla);
+  }, [modalLlamarAbierto]);
 
   // 🛡️ Función auxiliar que envía una petición con reintento automático si el Wi-Fi parpadea
   const enviarConReintento = async (url, opciones, reintentos = 3) => {
@@ -661,6 +684,12 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA (EXCLUSIVO CONVERSIÓN: JS, SS, WARD)
+  const pedidosFiltrados = listaBase.filter(p => {
+    if (filtroMaquina === 'TODAS') return true;
+    return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
+  });
+
   // 🦅 DRAG AND DROP BLINDADO (Funciona perfectamente con filtros de familia activos)
   const handleDragEnd = async (resultado) => {
     if (mostrarCerradas || !resultado.destination) return;
@@ -731,6 +760,89 @@ export default function PantallaProgramador() {
     }
   };
 
+  // 🎯 LÓGICA DEL MODAL EMERGENTE: LLAMAR ORDEN POR N° Y ASIGNARLE PUESTO (EJ. #11 o #12)
+  const candidatosLlamador = pedidosFiltrados
+    .map((item, idx) => ({ ...item, puestoActual: idx + 1 }))
+    .filter(item => {
+      if (!busquedaRapidaOrden.trim()) return true;
+      const q = busquedaRapidaOrden.toLowerCase().trim();
+      return (
+        String(item.id).toLowerCase().includes(q) ||
+        String(item.cliente || '').toLowerCase().includes(q) ||
+        String(item.producto || '').toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 12);
+
+  const ejecutarAsignacionPuestoModal = async (e) => {
+    e.preventDefault();
+    const ordenObjetivo = ordenLlamadaSeleccionada || (candidatosLlamador.length === 1 ? candidatosLlamador[0] : null);
+    if (!ordenObjetivo) {
+      alert('⚠️ Primero seleccioná o escribí el número de orden que querés mover.');
+      return;
+    }
+
+    const puestoDeseado = parseInt(nuevoPuestoModal, 10);
+    if (isNaN(puestoDeseado) || puestoDeseado < 1) {
+      alert('⚠️ Ingresá un número de puesto válido (por ejemplo: 11 o 12).');
+      return;
+    }
+
+    const indexActual = pedidosFiltrados.findIndex(p => p.id === ordenObjetivo.id);
+    if (indexActual === -1) return;
+
+    const destIndex = Math.max(0, Math.min(puestoDeseado - 1, pedidosFiltrados.length - 1));
+    const itemsFiltrados = Array.from(pedidosFiltrados);
+    const [movido] = itemsFiltrados.splice(indexActual, 1);
+
+    if (habilitarAlMover && movido.estado === 'Pendiente') {
+      movido.estado = 'Habilitada';
+    }
+
+    itemsFiltrados.splice(destIndex, 0, movido);
+
+    const idsFiltradosSet = new Set(pedidosFiltrados.map(p => p.id));
+    const restoPedidos = pedidos.filter(p => !idsFiltradosSet.has(p.id));
+    const nuevaListaGlobal = [...itemsFiltrados, ...restoPedidos];
+    setPedidos(nuevaListaGlobal);
+
+    const payload = nuevaListaGlobal.map((item, idx) => ({
+      id: item.id,
+      prioridad: idx + 1
+    }));
+
+    try {
+      await apiFetch('/api/pedidos/reordenar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nuevoOrden: payload })
+      });
+
+      if (habilitarAlMover && ordenObjetivo.estado === 'Pendiente') {
+        await apiFetch(`/api/pedidos/${ordenObjetivo.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            estado: 'Habilitada',
+            maquina_asignada: ordenObjetivo.maquina
+          })
+        });
+      }
+
+      const puestoFinalReal = destIndex + 1;
+      setMensajeExitoModal(
+        `✅ Orden #${ordenObjetivo.id} (${ordenObjetivo.cliente}) subida del puesto #${indexActual + 1} al puesto #${puestoFinalReal}${habilitarAlMover ? ' y enviada a planta' : ''}.`
+      );
+      // Preparamos automáticamente el puesto siguiente (ej. si pusiste 11, te sugiere 12 para la próxima)
+      setNuevoPuestoModal(String(Math.min(puestoFinalReal + 1, pedidosFiltrados.length)));
+      setBusquedaRapidaOrden('');
+      setOrdenLlamadaSeleccionada(null);
+    } catch (error) {
+      console.error('Error al mover orden desde modal:', error);
+      alert('❌ Error al guardar la nueva posición en la base de datos.');
+    }
+  };
+
   // 🎯 Renderiza el Semáforo Poka-Yoke de Alistamiento para cada orden (Responsivo)
   const renderSemaforoHerramental = (idOrden) => {
     const info = mapaHerramentales[String(idOrden)];
@@ -796,12 +908,6 @@ export default function PantallaProgramador() {
     );
   };
 
-  // 🎯 FILTRADO INTELIGENTE POR FAMILIA DE RUTA (EXCLUSIVO CONVERSIÓN: JS, SS, WARD)
-  const pedidosFiltrados = listaBase.filter(p => {
-    if (filtroMaquina === 'TODAS') return true;
-    return obtenerFamiliaRuta(p.maquina) === filtroMaquina;
-  });
-
   const cantidadCerradasEnCero = pedidosOcultos.filter(p => p.cantidad_fabricada <= 0).length;
 
   return (
@@ -858,12 +964,42 @@ export default function PantallaProgramador() {
 
       <div style={{ backgroundColor: 'white', padding: '1.3rem 1.5rem', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', borderLeft: mostrarCerradas ? '5px solid #fd7e14' : '5px solid #ffc107', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <h3 style={{ margin: 0, color: '#343a40', fontSize: '1.15rem' }}>
               {mostrarCerradas
                 ? '🚑 Órdenes Cerradas / En Expedición (Modo Rescate)'
-                : '2. Órdenes de Producción en Cola (Arrastrá o tipeá el puesto)'}
+                : '2. Órdenes de Producción en Cola'}
             </h3>
+
+            {/* 🎯 BOTÓN PARA ABRIR LA VENTANA EMERGENTE DE LLAMADO RÁPIDO A PUESTO */}
+            {!mostrarCerradas && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMensajeExitoModal('');
+                  setBusquedaRapidaOrden('');
+                  setOrdenLlamadaSeleccionada(null);
+                  setModalLlamarAbierto(true);
+                }}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '6px',
+                  border: '2px solid #0d6efd',
+                  backgroundColor: '#0d6efd',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 5px rgba(13, 110, 253, 0.25)'
+                }}
+                title="Buscar una orden que está muy abajo por su N° y asignarle directamente el puesto #11, #12, etc. (Atajo: Ctrl + B)"
+              >
+                🎯 Llamar Orden a Puesto (Ctrl+B)
+              </button>
+            )}
 
             <button
               onClick={() => setMostrarCerradas(!mostrarCerradas)}
@@ -1195,6 +1331,207 @@ export default function PantallaProgramador() {
           </DragDropContext>
         </div>
       </div>
+
+      {/* 🎯 VENTANA EMERGENTE (MODAL): LLAMAR ORDEN POR N° Y ASIGNARLE PUESTO (#11, #12, ETC.) */}
+      {modalLlamarAbierto && (
+        <div
+          onClick={() => setModalLlamarAbierto(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '1rem'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '12px',
+              width: '100%',
+              maxWidth: '680px',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.35)',
+              borderTop: '6px solid #0d6efd',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Cabecera del Modal */}
+            <div style={{ padding: '16px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.2rem' }}>
+                  🎯 Llamar Orden y Asignar Puesto Directo ({filtroMaquina === 'TODAS' ? 'Cola General' : filtroMaquina})
+                </h3>
+                <small style={{ color: '#64748b', fontWeight: 'bold' }}>
+                  Buscá por N° de Orden o Cliente y subila al puesto exacto sin desplazarte por la tabla
+                </small>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalLlamarAbierto(false)}
+                style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#64748b', fontWeight: 'bold' }}
+              >
+                ✖
+              </button>
+            </div>
+
+            <form onSubmit={ejecutarAsignacionPuestoModal} style={{ padding: '20px' }}>
+              {mensajeExitoModal && (
+                <div style={{ backgroundColor: '#d1fae5', color: '#065f46', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontWeight: 'bold', fontSize: '0.88rem', border: '1px solid #10b981' }}>
+                  {mensajeExitoModal}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 165px', gap: '12px', alignItems: 'end', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 'bold', color: '#334155', marginBottom: '5px' }}>
+                    1. Buscar Orden (N° de Orden, Cliente o Producto):
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="🔍 Ej: 48470, 48495, TODO CAJAS..."
+                    value={busquedaRapidaOrden}
+                    onChange={(e) => {
+                      setBusquedaRapidaOrden(e.target.value);
+                      setOrdenLlamadaSeleccionada(null);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      border: '2px solid #0d6efd',
+                      fontSize: '0.98rem',
+                      fontWeight: 'bold',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 'bold', color: '#856404', marginBottom: '5px' }}>
+                    2. Subir al Puesto #:
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={pedidosFiltrados.length || 1}
+                    required
+                    placeholder={`1 a ${pedidosFiltrados.length}`}
+                    value={nuevoPuestoModal}
+                    onChange={(e) => setNuevoPuestoModal(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      border: '2px solid #ffc107',
+                      backgroundColor: '#fffbeb',
+                      fontSize: '1.05rem',
+                      fontWeight: 'bold',
+                      textAlign: 'center',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Lista de coincidencias para elegir con 1 clic */}
+              <div style={{ maxHeight: '260px', overflowY: 'auto', border: '1px solid #cbd5e1', borderRadius: '8px', marginBottom: '14px', backgroundColor: '#f8fafc' }}>
+                {candidatosLlamador.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontStyle: 'italic' }}>
+                    No se encontraron órdenes con "{busquedaRapidaOrden}" en {filtroMaquina}.
+                  </div>
+                ) : (
+                  candidatosLlamador.map((item) => {
+                    const seleccionada =
+                      (ordenLlamadaSeleccionada && ordenLlamadaSeleccionada.id === item.id) ||
+                      (!ordenLlamadaSeleccionada && candidatosLlamador.length === 1);
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setOrdenLlamadaSeleccionada(item)}
+                        style={{
+                          padding: '10px 14px',
+                          borderBottom: '1px solid #e2e8f0',
+                          cursor: 'pointer',
+                          backgroundColor: seleccionada ? '#e0f2fe' : '#ffffff',
+                          borderLeft: seleccionada ? '5px solid #0d6efd' : '5px solid transparent',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: '10px'
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ backgroundColor: '#fff3cd', color: '#856404', border: '1px solid #ffc107', padding: '2px 7px', borderRadius: '4px', fontSize: '0.78rem', fontWeight: 'bold' }}>
+                              Hoy en #{item.puestoActual}
+                            </span>
+                            <strong style={{ fontSize: '1rem', color: '#0f172a' }}>Orden #{item.id}</strong>
+                            <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#0056b3' }}>({item.maquina})</span>
+                            <span style={{
+                              fontSize: '0.72rem',
+                              padding: '2px 7px',
+                              borderRadius: '10px',
+                              backgroundColor: item.estado === 'Pendiente' ? '#ffefb3' : '#d4edda',
+                              color: item.estado === 'Pendiente' ? '#856404' : '#155724',
+                              fontWeight: 'bold'
+                            }}>
+                              {item.estado}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.84rem', fontWeight: 'bold', color: '#334155', marginTop: '3px' }}>
+                            {item.cliente} — <span style={{ fontWeight: 'normal', color: '#475569' }}>{item.producto}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ minWidth: '170px' }}>
+                          {renderSemaforoHerramental(item.id)}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    checked={habilitarAlMover}
+                    onChange={(e) => setHabilitarAlMover(e.target.checked)}
+                  />
+                  🚀 Enviar también a Planta (cambiar a "Habilitada") al asignarle el puesto
+                </label>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setModalLlamarAbierto(false)}
+                    style={{ padding: '10px 16px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f1f5f9', color: '#334155', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="submit"
+                    style={{ padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#0d6efd', color: '#ffffff', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.92rem' }}
+                  >
+                    ⚡ Ubicar en Puesto #{nuevoPuestoModal || '?'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
