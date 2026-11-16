@@ -6,7 +6,8 @@ const LISTA_SUPERVISORES = [
   "SERGIO SANCHEZ",
   "OLEA JULIO",
   "MARTINEZ ELVIO",
-  "CRUZ WALTER"
+  "CRUZ WALTER",
+  "CARRIZO CRISTIAN"
 ];
 
 // Nómina base de respaldo por si en la BD aún no están todos cargados
@@ -133,6 +134,7 @@ export default function PantallaCargaManual() {
   const [operadorManualExtra, setOperadorManualExtra] = useState('');
   const [supervisor, setSupervisor] = useState('SERGIO SANCHEZ');
   const [cantidadFabricada, setCantidadFabricada] = useState('');
+  const [modoAcumulacion, setModoAcumulacion] = useState('SUMAR'); // 'SUMAR' | 'REEMPLAZAR'
   const [estadoCierre, setEstadoCierre] = useState('Finalizada');
   const [minutosSetup, setMinutosSetup] = useState('20');
   const [reemplazarParadas, setReemplazarParadas] = useState(true);
@@ -172,7 +174,6 @@ export default function PantallaCargaManual() {
         setPedidos(listaPedidos);
       }
 
-      // Unificamos máquinas de BD + máquinas presentes en los pedidos + catálogo base
       const setMaq = new Set(MAQUINAS_BASE);
       if (resMaq.ok) {
         const dataMaq = await resMaq.json();
@@ -187,7 +188,6 @@ export default function PantallaCargaManual() {
       });
       setMaquinas(Array.from(setMaq).sort());
 
-      // Unificamos todos los operadores de la tabla operadores + los que hayan operado en historial + nómina base
       const setOp = new Set();
       if (resOp.ok) {
         const dataOp = await resOp.json();
@@ -224,18 +224,48 @@ export default function PantallaCargaManual() {
     cargarDatosIniciales();
   }, []);
 
+  const recalcularEstadoSegunCajas = (valInput, modo, ordBase) => {
+    const ord = ordBase || ordenSeleccionada;
+    if (!ord) return;
+    const previas = Number(ord.cantidad_fabricada) || 0;
+    const meta = Number(ord.cantidad_programada) || 0;
+    const ingresadas = parseFloat(valInput) || 0;
+    const totalProyectado = (previas > 0 && modo === 'SUMAR')
+      ? previas + ingresadas
+      : ingresadas;
+
+    if (totalProyectado > 0 && totalProyectado < meta) {
+      setEstadoCierre('Finalizada Parcial');
+    } else if (totalProyectado >= meta && meta > 0) {
+      setEstadoCierre('Finalizada');
+    }
+  };
+
   const seleccionarOrden = async (ord) => {
     setOrdenSeleccionada(ord);
     setMaquina(ord.maquina_asignada || 'COR-JS');
     if (ord.operador && ord.operador !== 'General') {
       setOperador(String(ord.operador).trim().toUpperCase());
     }
-    setCantidadFabricada(
-      ord.cantidad_fabricada && Number(ord.cantidad_fabricada) > 0
-        ? String(ord.cantidad_fabricada)
-        : String(ord.cantidad_programada || '')
-    );
-    setEstadoCierre('Finalizada');
+
+    const previas = Number(ord.cantidad_fabricada) || 0;
+    const meta = Number(ord.cantidad_programada) || 0;
+
+    if (previas > 0) {
+      // ➕ Si ya tenía un parcial previo (ej. Sábado), activamos modo SUMAR por defecto
+      setModoAcumulacion('SUMAR');
+      const saldoRestante = Math.max(0, meta - previas);
+      setCantidadFabricada(saldoRestante > 0 ? String(saldoRestante) : '');
+      setEstadoCierre('Finalizada');
+      // No pisamos las paradas del parcial anterior
+      setReemplazarParadas(false);
+    } else {
+      setModoAcumulacion('REEMPLAZAR');
+      setCantidadFabricada(String(meta || ''));
+      setEstadoCierre('Finalizada');
+      setReemplazarParadas(true);
+    }
+
     setParadas([]);
 
     const coloresLista = ord.colores
@@ -285,12 +315,19 @@ export default function PantallaCargaManual() {
     setParadas(paradas.filter((_, i) => i !== idx));
   };
 
+  // Cálculos en vivo para mostrar el resumen claro antes de guardar
+  const cajasPreviasOrden = Number(ordenSeleccionada?.cantidad_fabricada) || 0;
+  const cajasIngresadasInput = parseFloat(cantidadFabricada) || 0;
+  const esModoSumaActiva = cajasPreviasOrden > 0 && modoAcumulacion === 'SUMAR';
+  const totalAcumuladoFinal = esModoSumaActiva
+    ? cajasPreviasOrden + cajasIngresadasInput
+    : cajasIngresadasInput;
+
   const handleGuardarParte = async (e) => {
     e.preventDefault();
     if (!ordenSeleccionada) return;
 
     const numOrd = ordenSeleccionada.numero_orden || ordenSeleccionada.id;
-    const cantFab = parseFloat(cantidadFabricada) || 0;
     const operadorFinal = operador === '__OTRO__'
       ? operadorManualExtra.trim().toUpperCase()
       : operador;
@@ -300,8 +337,8 @@ export default function PantallaCargaManual() {
       return;
     }
 
-    if (cantFab <= 0 && estadoCierre === 'Finalizada') {
-      const confCero = window.confirm('⚠️ Estás por registrar la orden con 0 cajas fabricadas. ¿Continuar de todos modos?');
+    if (cajasIngresadasInput <= 0 && estadoCierre === 'Finalizada') {
+      const confCero = window.confirm('⚠️ Estás por registrar este parte con 0 cajas fabricadas. ¿Continuar de todos modos?');
       if (!confCero) return;
     }
 
@@ -316,7 +353,12 @@ export default function PantallaCargaManual() {
           maquina,
           operador: operadorFinal,
           supervisor,
-          cantidad_fabricada: cantFab,
+          // Enviamos tanto el parcial del día como el total acumulado y el modo elegido
+          modo_acumulacion: esModoSumaActiva ? 'SUMAR' : 'REEMPLAZAR',
+          sumar_a_existente: esModoSumaActiva,
+          cantidad_parte_actual: cajasIngresadasInput,
+          cantidad_previa: cajasPreviasOrden,
+          cantidad_fabricada: totalAcumuladoFinal,
           estado_cierre: estadoCierre,
           minutos_setup: parseFloat(minutosSetup) || 0,
           paradas,
@@ -343,7 +385,14 @@ export default function PantallaCargaManual() {
 
       const data = await res.json();
       if (res.ok) {
-        alert(`✅ ${data.mensaje}\n\n• Impactó en Historial / OEE con fecha ${fechaProduccion}\n• Maquinista: ${operadorFinal}\n• Disponible en Expedición con ${cantFab} cajas.`);
+        alert(
+          `✅ ${data.mensaje || 'Parte físico registrado correctamente.'}\n\n` +
+          `📅 Fecha del parte: ${fechaProduccion} (Turno ${turno})\n` +
+          `👷 Maquinista: ${operadorFinal}\n` +
+          (esModoSumaActiva
+            ? `➕ Cajas sumadas hoy: ${cajasIngresadasInput} caj. (Previa: ${cajasPreviasOrden} caj.)\n📦 Total Acumulado en Orden y Expedición: ${totalAcumuladoFinal} cajas.`
+            : `📦 Total registrado en Orden y Expedición: ${totalAcumuladoFinal} cajas.`)
+        );
         await cargarDatosIniciales();
         setOrdenSeleccionada(null);
         setBusqueda('');
@@ -378,7 +427,7 @@ export default function PantallaCargaManual() {
           <div>
             <h2 style={{ margin: 0, color: '#343a40', fontSize: '1.8rem' }}>Consola de Carga Manual de Partes Físicos</h2>
             <small style={{ color: '#6c757d', fontWeight: 'bold' }}>
-              Digitalización diferida de planillas de planta (Actualiza Cola, OEE, Tiempos Muertos, CIP y Expedición)
+              Digitalización diferida de planillas de planta (Soporta suma de parciales en distintos días, OEE, TNP, CIP y Expedición)
             </small>
           </div>
         </div>
@@ -402,6 +451,7 @@ export default function PantallaCargaManual() {
               const num = ord.numero_orden || ord.id;
               const activa = (ordenSeleccionada?.numero_orden || ordenSeleccionada?.id) === num;
               const esFinalizada = ['Finalizada', 'Finalizada Parcial', 'Cerrado por Acuerdo'].includes(ord.estado);
+              const tieneParcial = Number(ord.cantidad_fabricada) > 0;
 
               return (
                 <div
@@ -423,7 +473,7 @@ export default function PantallaCargaManual() {
                       padding: '2px 8px',
                       borderRadius: '12px',
                       fontWeight: 'bold',
-                      backgroundColor: ord.estado === 'Pendiente' ? '#ffefb3' : (esFinalizada ? '#d4edda' : '#cfe2ff'),
+                      backgroundColor: ord.estado === 'Pendiente' ? '#ffefb3' : (ord.estado === 'Finalizada Parcial' ? '#ffe5d0' : (esFinalizada ? '#d4edda' : '#cfe2ff')),
                       color: '#333'
                     }}>
                       {ord.estado} · {ord.maquina_asignada || 'S/M'}
@@ -433,7 +483,11 @@ export default function PantallaCargaManual() {
                   <div style={{ fontSize: '0.78rem', color: '#666' }}>{ord.descripcion_producto || ord.producto_descripcion}</div>
                   <div style={{ fontSize: '0.75rem', color: '#495057', marginTop: '4px' }}>
                     Prog: <strong>{ord.cantidad_programada}</strong> caj.
-                    {Number(ord.cantidad_fabricada) > 0 && <> | Fab: <strong>{ord.cantidad_fabricada}</strong></>}
+                    {tieneParcial && (
+                      <span style={{ color: '#d9480f', fontWeight: 'bold' }}>
+                        {' '}| Ya cargado: {ord.cantidad_fabricada} caj.
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -462,9 +516,16 @@ export default function PantallaCargaManual() {
                       | {ordenSeleccionada.cliente}
                     </span>
                   </div>
-                  <span style={{ backgroundColor: '#0056b3', color: '#fff', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold' }}>
-                    Meta Programada: {ordenSeleccionada.cantidad_programada} cajas
-                  </span>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {cajasPreviasOrden > 0 && (
+                      <span style={{ backgroundColor: '#fd7e14', color: '#fff', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                        Parcial Previo: {cajasPreviasOrden} cajas
+                      </span>
+                    )}
+                    <span style={{ backgroundColor: '#0056b3', color: '#fff', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                      Meta Programada: {ordenSeleccionada.cantidad_programada} cajas
+                    </span>
+                  </div>
                 </div>
                 <div style={{ marginTop: '6px', fontSize: '0.92rem', color: '#333' }}>
                   <strong>Producto:</strong> {ordenSeleccionada.descripcion_producto || ordenSeleccionada.producto_descripcion}
@@ -543,14 +604,68 @@ export default function PantallaCargaManual() {
                 </div>
               </div>
 
-              {/* BLOQUE 2: CANTIDADES Y ESTADO DE CIERRE */}
+              {/* BLOQUE 2: CANTIDADES, MODO DE SUMA DE PARCIALES Y ESTADO DE CIERRE */}
               <h4 style={{ margin: '0 0 10px 0', color: '#343a40', borderBottom: '2px solid #eee', paddingBottom: '6px' }}>
                 📦 2. Producción Real y Estado de Cierre
               </h4>
+
+              {/* 🔔 AVISO INTELIGENTE CUANDO YA EXISTE UN PARCIAL PREVIO (EJ. SÁBADO) */}
+              {cajasPreviasOrden > 0 && (
+                <div style={{ backgroundColor: '#fff8e6', border: '2px solid #fd7e14', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#b45309', marginBottom: '8px', fontSize: '0.9rem' }}>
+                    ⚠️ Esta orden ya tiene <strong>{cajasPreviasOrden} cajas</strong> registradas en un parte anterior. ¿Cómo querés aplicar las cajas de la planilla de hoy?
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModoAcumulacion('SUMAR');
+                        setReemplazarParadas(false);
+                        recalcularEstadoSegunCajas(cantidadFabricada, 'SUMAR');
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '9px 12px',
+                        borderRadius: '6px',
+                        border: modoAcumulacion === 'SUMAR' ? '2px solid #198754' : '1px solid #ccc',
+                        backgroundColor: modoAcumulacion === 'SUMAR' ? '#d1fae5' : '#fff',
+                        color: modoAcumulacion === 'SUMAR' ? '#065f46' : '#495057',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem'
+                      }}
+                    >
+                      ➕ Sumar al Acumulado Anterior ({cajasPreviasOrden} + {cajasIngresadasInput} = {cajasPreviasOrden + cajasIngresadasInput} caj.)
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModoAcumulacion('REEMPLAZAR');
+                        recalcularEstadoSegunCajas(cantidadFabricada, 'REEMPLAZAR');
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '9px 12px',
+                        borderRadius: '6px',
+                        border: modoAcumulacion === 'REEMPLAZAR' ? '2px solid #dc3545' : '1px solid #ccc',
+                        backgroundColor: modoAcumulacion === 'REEMPLAZAR' ? '#fee2e2' : '#fff',
+                        color: modoAcumulacion === 'REEMPLAZAR' ? '#991b1b' : '#495057',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem'
+                      }}
+                    >
+                      ✏️ Sobreescribir / Corregir Total (Quedará en {cajasIngresadasInput} caj.)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '1.2rem' }}>
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: 'bold', display: 'block', marginBottom: '4px', color: '#198754' }}>
-                    Cantidad Fabricada (Cajas Buenas):
+                    {esModoSumaActiva ? 'Cajas Fabricadas HOY (en este Parte):' : 'Cantidad Fabricada (Cajas Buenas):'}
                   </label>
                   <input
                     type="number"
@@ -560,16 +675,15 @@ export default function PantallaCargaManual() {
                     onChange={(e) => {
                       const val = e.target.value;
                       setCantidadFabricada(val);
-                      const num = parseFloat(val) || 0;
-                      const meta = parseFloat(ordenSeleccionada.cantidad_programada) || 0;
-                      if (num > 0 && num < meta) {
-                        setEstadoCierre('Finalizada Parcial');
-                      } else if (num >= meta) {
-                        setEstadoCierre('Finalizada');
-                      }
+                      recalcularEstadoSegunCajas(val, modoAcumulacion);
                     }}
                     style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '2px solid #198754', fontSize: '1.1rem', fontWeight: 'bold', boxSizing: 'border-box' }}
                   />
+                  {esModoSumaActiva && (
+                    <div style={{ marginTop: '5px', fontSize: '0.78rem', color: '#065f46', fontWeight: 'bold' }}>
+                      📊 Total Acumulado Final: <strong>{totalAcumuladoFinal}</strong> / {ordenSeleccionada.cantidad_programada} cajas
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -589,7 +703,7 @@ export default function PantallaCargaManual() {
 
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: 'bold', display: 'block', marginBottom: '4px', color: '#0d6efd' }}>
-                    Tiempo de Set-Up (Minutos):
+                    Tiempo de Set-Up de este Turno (Min):
                   </label>
                   <input
                     type="number"
@@ -664,7 +778,7 @@ export default function PantallaCargaManual() {
                     checked={reemplazarParadas}
                     onChange={(e) => setReemplazarParadas(e.target.checked)}
                   />{' '}
-                  Reemplazar cualquier parada previa que se haya cargado por error en esta orden
+                  Reemplazar paradas previas de esta orden (desmarcar si estás sumando un 2° turno/día para conservar las paradas anteriores)
                 </label>
               </div>
 
@@ -761,7 +875,11 @@ export default function PantallaCargaManual() {
                   cursor: 'pointer'
                 }}
               >
-                {guardando ? 'Guardando Parte Físico en BD...' : '💾 Registrar Parte Físico Completo en Base de Datos'}
+                {guardando
+                  ? 'Guardando Parte Físico en BD...'
+                  : esModoSumaActiva
+                  ? `➕ Sumar ${cajasIngresadasInput} Cajas al Parte Anterior (Total: ${totalAcumuladoFinal} caj.)`
+                  : '💾 Registrar Parte Físico Completo en Base de Datos'}
               </button>
             </form>
           )}
