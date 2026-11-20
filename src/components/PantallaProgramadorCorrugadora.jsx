@@ -6,6 +6,9 @@ export default function PantallaProgramadorCorrugadora() {
   const [claves, setClaves] = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [programas, setProgramas] = useState([]);
+  const [papelesStock, setPapelesStock] = useState([]);
+  const [origenPedidos, setOrigenPedidos] = useState('');
+  const [importandoCSV, setImportandoCSV] = useState(false);
   const [cargando, setCargando] = useState(true);
 
   // Filtros y Parámetros del Cerebro IA
@@ -48,6 +51,8 @@ export default function PantallaProgramadorCorrugadora() {
         setClaves(data.claves || []);
         setPedidos(data.pedidos || []);
         setProgramas(data.programas || []);
+        setPapelesStock(data.papeles_stock || []);
+        setOrigenPedidos(data.origen_pedidos || '');
 
         if (!claveSeleccionada && data.claves && data.claves.length > 0) {
           setClaveSeleccionada(data.claves[0].clave);
@@ -91,6 +96,106 @@ export default function PantallaProgramadorCorrugadora() {
       cargarContexto();
     } catch (e) {}
   };
+
+  const handleImportarCSVCorrugadora = (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  setImportandoCSV(true);
+
+  const parseNumAR = (v) => {
+    if (!v) return 0;
+    const n = parseFloat(String(v).replace(/"/g, '').replace(/\./g, '').replace(',', '.').trim());
+    return isNaN(n) ? 0 : n;
+  };
+
+  const procesarTexto = async (textoRaw) => {
+    try {
+      const texto = String(textoRaw || '').replace(/^\uFEFF/, '');
+      const lineas = texto.split(/\r\n|\n/).filter(l => l.trim());
+      if (lineas.length < 2) throw new Error('Archivo vacío');
+
+      const header = lineas[0].toLowerCase();
+
+      // 1. Detectar CLAVES.csv
+      if (header.includes('liner.ext') && header.includes('clave')) {
+        const clavesPayload = lineas.slice(1).map(l => {
+          const c = l.split(';');
+          return {
+            clave: c[0]?.trim(),
+            liner_ext_ideal: c[1]?.trim(), liner_ext_gramaje: parseNumAR(c[2]), liner_ext_rct: parseNumAR(c[3]),
+            medium_ideal: c[4]?.trim(), onda1_gramaje: parseNumAR(c[5]), onda1_cct: parseNumAR(c[6]),
+            liner_int_ideal: c[7]?.trim(), liner_int_gramaje: parseNumAR(c[8]), liner_int_rct: parseNumAR(c[9]),
+            onda2_ideal: c[10]?.trim(), onda2_gramaje: parseNumAR(c[11]), onda2_cct: parseNumAR(c[12]),
+            entretapa_ideal: c[13]?.trim(), entretapa_gramaje: parseNumAR(c[14]), entretapa_rct: parseNumAR(c[15])
+          };
+        }).filter(x => x.clave);
+
+        const res = await apiFetch('/api/corrugadora/importar-claves', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ claves: clavesPayload })
+        });
+        const data = await res.json();
+        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+      }
+      // 2. Detectar REGISTRO DE PAPELES.csv o Bobinas.csv
+      else if (header.includes('tipo de papel') && header.includes('stock')) {
+        const papelesPayload = lineas.slice(1).map(l => {
+          const c = l.split(';');
+          return {
+            codigo: c[0]?.trim(), nombre: c[1]?.trim(), precio_kg: parseNumAR(c[2]),
+            fabricante: c[3]?.trim(), proveedor: c[4]?.trim(), color: c[5]?.trim(),
+            gramaje: parseNumAR(c[6]), tipo_papel: c[7]?.trim(), punto_pedido_kg: parseNumAR(c[8]),
+            stock_kg: parseNumAR(c[9]), valor_stock: parseNumAR(c[10]), fsc: c[11]?.trim()
+          };
+        }).filter(x => x.codigo);
+
+        const res = await apiFetch('/api/corrugadora/importar-papeles', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ papeles: papelesPayload })
+        });
+        const data = await res.json();
+        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+      }
+      // 3. Detectar PENDIENTES DE CORRUGADORA.csv
+      else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
+        const pendientesPayload = lineas.slice(1).map(l => {
+          const c = l.split(';');
+          return {
+            numero_orden: parseInt(String(c[0] || '').replace(/\./g, ''), 10),
+            fecha_pedido: c[1]?.trim(), fecha_entrega: c[2]?.trim(), clave_material: c[3]?.trim(),
+            ancho_pref_mm: parseNumAR(c[4]) || null, codigo_producto: c[5]?.trim(),
+            cliente: c[6]?.trim(), descripcion: c[7]?.trim(),
+            largo_mm: parseNumAR(c[8]), ancho_mm: parseNumAR(c[9]),
+            cant_pedido: parseNumAR(c[10]), cajas: parseNumAR(c[11]),
+            planchas_necesarias: parseNumAR(c[12]), pendiente: parseNumAR(c[13]),
+            m2_pendientes: parseNumAR(c[14]),
+            primer_pedido: String(c[15] || '').toUpperCase().includes('VERDAD'),
+            progr_siguiente: parseNumAR(c[16])
+          };
+        }).filter(x => x.numero_orden && x.pendiente > 0);
+
+        const res = await apiFetch('/api/corrugadora/importar-pendientes', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pendientes: pendientesPayload, reemplazar_cola: true })
+        });
+        const data = await res.json();
+        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+      } else {
+        alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, Bobinas.csv o PENDIENTES DE CORRUGADORA.csv.');
+      }
+      await cargarContexto();
+    } catch (err) {
+      alert('❌ Error procesando CSV: ' + err.message);
+    } finally {
+      setImportandoCSV(false);
+      e.target.value = '';
+    }
+  };
+
+  const reader = new FileReader();
+  reader.onload = (ev) => procesarTexto(ev.target.result);
+  reader.readAsText(file, 'UTF-8');
+};
 
   // 🧠 EJECUTAR MOTOR DE OPTIMIZACIÓN IA
   const ejecutarCerebroIA = async () => {
@@ -290,6 +395,15 @@ export default function PantallaProgramadorCorrugadora() {
               cursor: 'pointer'
             }}
           >
+
+          <label style={{
+            padding: '9px 14px', borderRadius: '8px', backgroundColor: '#0f766e', color: '#fff',
+            fontWeight: 'bold', cursor: 'pointer', fontSize: '0.86rem'
+          }}>
+            {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV (Claves / Papeles / Pendientes)'}
+            <input type="file" accept=".csv" disabled={importandoCSV} onChange={handleImportarCSVCorrugadora} style={{ display: 'none' }} />
+            </label>
+
             📜 Matriz Claves y Gramajes
           </button>
         </div>
@@ -610,6 +724,9 @@ export default function PantallaProgramadorCorrugadora() {
                     <datalist id="lista-alternativas-clave">
                       {(infoClaveActual?.alternativas_aprobadas || []).map((alt, idx) => (
                         <option key={idx} value={alt} />
+                      ))}
+                      {papelesStock.map((pap) => (
+                        <option key={pap.codigo} value={`${pap.codigo} — ${pap.nombre} (${Math.round(pap.stock_kg)} kg disp.)`} />
                       ))}
                     </datalist>
                   </div>
