@@ -14,6 +14,7 @@ export default function PantallaProgramadorCorrugadora() {
   // Filtros y Parámetros del Cerebro IA
   const [claveSeleccionada, setClaveSeleccionada] = useState('');
   const [clavesCompatiblesExtra, setClavesCompatiblesExtra] = useState([]);
+  const [ordenesSeleccionadasIA, setOrdenesSeleccionadasIA] = useState([]);
   const [trimMaxPct, setTrimMaxPct] = useState(5.0);
   const [forzarOrdenId, setForzarOrdenId] = useState('');
   const [forzarAnchoBobina, setForzarAnchoBobina] = useState('');
@@ -72,6 +73,13 @@ export default function PantallaProgramadorCorrugadora() {
   const anchosActivos = anchos.filter(a => a.activo).map(a => a.ancho_mm);
   const infoClaveActual = claves.find(c => c.clave === claveSeleccionada) || null;
 
+  const toggleSeleccionOrdenIA = (numOrden) => {
+    const num = Number(numOrden);
+    setOrdenesSeleccionadasIA(prev =>
+      prev.includes(num) ? prev.filter(id => id !== num) : [...prev, num]
+    );
+  };
+
   // Agregar nuevo ancho de bobina al pañol
   const handleAgregarAncho = async (e) => {
     e.preventDefault();
@@ -97,105 +105,106 @@ export default function PantallaProgramadorCorrugadora() {
     } catch (e) {}
   };
 
+  // 📥 IMPORTADOR INTELIGENTE DE CSV (CLAVES, PAPELES/BOBINAS, PENDIENTES)
   const handleImportarCSVCorrugadora = (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  setImportandoCSV(true);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportandoCSV(true);
 
-  const parseNumAR = (v) => {
-    if (!v) return 0;
-    const n = parseFloat(String(v).replace(/"/g, '').replace(/\./g, '').replace(',', '.').trim());
-    return isNaN(n) ? 0 : n;
+    const parseNumAR = (v) => {
+      if (!v) return 0;
+      const n = parseFloat(String(v).replace(/"/g, '').replace(/\./g, '').replace(',', '.').trim());
+      return isNaN(n) ? 0 : n;
+    };
+
+    const procesarTexto = async (textoRaw) => {
+      try {
+        const texto = String(textoRaw || '').replace(/^\uFEFF/, '');
+        const lineas = texto.split(/\r\n|\n/).filter(l => l.trim());
+        if (lineas.length < 2) throw new Error('Archivo vacío');
+
+        const header = lineas[0].toLowerCase();
+
+        // 1. Detectar CLAVES.csv
+        if (header.includes('liner.ext') && header.includes('clave')) {
+          const clavesPayload = lineas.slice(1).map(l => {
+            const c = l.split(';');
+            return {
+              clave: c[0]?.trim(),
+              liner_ext_ideal: c[1]?.trim(), liner_ext_gramaje: parseNumAR(c[2]), liner_ext_rct: parseNumAR(c[3]),
+              medium_ideal: c[4]?.trim(), onda1_gramaje: parseNumAR(c[5]), onda1_cct: parseNumAR(c[6]),
+              liner_int_ideal: c[7]?.trim(), liner_int_gramaje: parseNumAR(c[8]), liner_int_rct: parseNumAR(c[9]),
+              onda2_ideal: c[10]?.trim(), onda2_gramaje: parseNumAR(c[11]), onda2_cct: parseNumAR(c[12]),
+              entretapa_ideal: c[13]?.trim(), entretapa_gramaje: parseNumAR(c[14]), entretapa_rct: parseNumAR(c[15])
+            };
+          }).filter(x => x.clave);
+
+          const res = await apiFetch('/api/corrugadora/importar-claves', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ claves: clavesPayload })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+        }
+        // 2. Detectar REGISTRO DE PAPELES.csv o Bobinas.csv
+        else if (header.includes('tipo de papel') && header.includes('stock')) {
+          const papelesPayload = lineas.slice(1).map(l => {
+            const c = l.split(';');
+            return {
+              codigo: c[0]?.trim(), nombre: c[1]?.trim(), precio_kg: parseNumAR(c[2]),
+              fabricante: c[3]?.trim(), proveedor: c[4]?.trim(), color: c[5]?.trim(),
+              gramaje: parseNumAR(c[6]), tipo_papel: c[7]?.trim(), punto_pedido_kg: parseNumAR(c[8]),
+              stock_kg: parseNumAR(c[9]), valor_stock: parseNumAR(c[10]), fsc: c[11]?.trim()
+            };
+          }).filter(x => x.codigo);
+
+          const res = await apiFetch('/api/corrugadora/importar-papeles', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ papeles: papelesPayload })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+        }
+        // 3. Detectar PENDIENTES DE CORRUGADORA.csv
+        else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
+          const pendientesPayload = lineas.slice(1).map(l => {
+            const c = l.split(';');
+            return {
+              numero_orden: parseInt(String(c[0] || '').replace(/\./g, ''), 10),
+              fecha_pedido: c[1]?.trim(), fecha_entrega: c[2]?.trim(), clave_material: c[3]?.trim(),
+              ancho_pref_mm: parseNumAR(c[4]) || null, codigo_producto: c[5]?.trim(),
+              cliente: c[6]?.trim(), descripcion: c[7]?.trim(),
+              largo_mm: parseNumAR(c[8]), ancho_mm: parseNumAR(c[9]),
+              cant_pedido: parseNumAR(c[10]), cajas: parseNumAR(c[11]),
+              planchas_necesarias: parseNumAR(c[12]), pendiente: parseNumAR(c[13]),
+              m2_pendientes: parseNumAR(c[14]),
+              primer_pedido: String(c[15] || '').toUpperCase().includes('VERDAD'),
+              progr_siguiente: parseNumAR(c[16])
+            };
+          }).filter(x => x.numero_orden && x.pendiente > 0);
+
+          const res = await apiFetch('/api/corrugadora/importar-pendientes', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pendientes: pendientesPayload, reemplazar_cola: true })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+        } else {
+          alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, Bobinas.csv o PENDIENTES DE CORRUGADORA.csv.');
+        }
+        await cargarContexto();
+      } catch (err) {
+        alert('❌ Error procesando CSV: ' + err.message);
+      } finally {
+        setImportandoCSV(false);
+        e.target.value = '';
+      }
+    };
+
+    const reader = new FileReader();
+    reader.onload = (ev) => procesarTexto(ev.target.result);
+    reader.readAsText(file, 'UTF-8');
   };
-
-  const procesarTexto = async (textoRaw) => {
-    try {
-      const texto = String(textoRaw || '').replace(/^\uFEFF/, '');
-      const lineas = texto.split(/\r\n|\n/).filter(l => l.trim());
-      if (lineas.length < 2) throw new Error('Archivo vacío');
-
-      const header = lineas[0].toLowerCase();
-
-      // 1. Detectar CLAVES.csv
-      if (header.includes('liner.ext') && header.includes('clave')) {
-        const clavesPayload = lineas.slice(1).map(l => {
-          const c = l.split(';');
-          return {
-            clave: c[0]?.trim(),
-            liner_ext_ideal: c[1]?.trim(), liner_ext_gramaje: parseNumAR(c[2]), liner_ext_rct: parseNumAR(c[3]),
-            medium_ideal: c[4]?.trim(), onda1_gramaje: parseNumAR(c[5]), onda1_cct: parseNumAR(c[6]),
-            liner_int_ideal: c[7]?.trim(), liner_int_gramaje: parseNumAR(c[8]), liner_int_rct: parseNumAR(c[9]),
-            onda2_ideal: c[10]?.trim(), onda2_gramaje: parseNumAR(c[11]), onda2_cct: parseNumAR(c[12]),
-            entretapa_ideal: c[13]?.trim(), entretapa_gramaje: parseNumAR(c[14]), entretapa_rct: parseNumAR(c[15])
-          };
-        }).filter(x => x.clave);
-
-        const res = await apiFetch('/api/corrugadora/importar-claves', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ claves: clavesPayload })
-        });
-        const data = await res.json();
-        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-      }
-      // 2. Detectar REGISTRO DE PAPELES.csv o Bobinas.csv
-      else if (header.includes('tipo de papel') && header.includes('stock')) {
-        const papelesPayload = lineas.slice(1).map(l => {
-          const c = l.split(';');
-          return {
-            codigo: c[0]?.trim(), nombre: c[1]?.trim(), precio_kg: parseNumAR(c[2]),
-            fabricante: c[3]?.trim(), proveedor: c[4]?.trim(), color: c[5]?.trim(),
-            gramaje: parseNumAR(c[6]), tipo_papel: c[7]?.trim(), punto_pedido_kg: parseNumAR(c[8]),
-            stock_kg: parseNumAR(c[9]), valor_stock: parseNumAR(c[10]), fsc: c[11]?.trim()
-          };
-        }).filter(x => x.codigo);
-
-        const res = await apiFetch('/api/corrugadora/importar-papeles', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ papeles: papelesPayload })
-        });
-        const data = await res.json();
-        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-      }
-      // 3. Detectar PENDIENTES DE CORRUGADORA.csv
-      else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
-        const pendientesPayload = lineas.slice(1).map(l => {
-          const c = l.split(';');
-          return {
-            numero_orden: parseInt(String(c[0] || '').replace(/\./g, ''), 10),
-            fecha_pedido: c[1]?.trim(), fecha_entrega: c[2]?.trim(), clave_material: c[3]?.trim(),
-            ancho_pref_mm: parseNumAR(c[4]) || null, codigo_producto: c[5]?.trim(),
-            cliente: c[6]?.trim(), descripcion: c[7]?.trim(),
-            largo_mm: parseNumAR(c[8]), ancho_mm: parseNumAR(c[9]),
-            cant_pedido: parseNumAR(c[10]), cajas: parseNumAR(c[11]),
-            planchas_necesarias: parseNumAR(c[12]), pendiente: parseNumAR(c[13]),
-            m2_pendientes: parseNumAR(c[14]),
-            primer_pedido: String(c[15] || '').toUpperCase().includes('VERDAD'),
-            progr_siguiente: parseNumAR(c[16])
-          };
-        }).filter(x => x.numero_orden && x.pendiente > 0);
-
-        const res = await apiFetch('/api/corrugadora/importar-pendientes', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pendientes: pendientesPayload, reemplazar_cola: true })
-        });
-        const data = await res.json();
-        alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-      } else {
-        alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, Bobinas.csv o PENDIENTES DE CORRUGADORA.csv.');
-      }
-      await cargarContexto();
-    } catch (err) {
-      alert('❌ Error procesando CSV: ' + err.message);
-    } finally {
-      setImportandoCSV(false);
-      e.target.value = '';
-    }
-  };
-
-  const reader = new FileReader();
-  reader.onload = (ev) => procesarTexto(ev.target.result);
-  reader.readAsText(file, 'UTF-8');
-};
 
   // 🧠 EJECUTAR MOTOR DE OPTIMIZACIÓN IA
   const ejecutarCerebroIA = async () => {
@@ -211,7 +220,8 @@ export default function PantallaProgramadorCorrugadora() {
           anchos_disponibles: anchosActivos,
           trim_maximo_pct: Number(trimMaxPct) || 5.5,
           forzar_ancho_bobina: forzarAnchoBobina ? Number(forzarAnchoBobina) : null,
-          forzar_orden_id: forzarOrdenId ? Number(forzarOrdenId) : null
+          forzar_orden_id: forzarOrdenId ? Number(forzarOrdenId) : null,
+          ordenes_seleccionadas: ordenesSeleccionadasIA
         })
       });
       if (res.ok) {
@@ -246,7 +256,7 @@ export default function PantallaProgramadorCorrugadora() {
 
   const cambiarSalidasManual = (idx, delta) => {
     const copia = [...pistasManuales];
-    const nueva = Math.max(1, Math.min(6, copia[idx].salidas + delta));
+    const nueva = Math.max(1, Math.min(5, copia[idx].salidas + delta));
     copia[idx].salidas = nueva;
     setPistasManuales(copia);
   };
@@ -347,12 +357,14 @@ export default function PantallaProgramadorCorrugadora() {
             <h2 style={{ margin: 0, color: '#4c1d95', fontSize: '1.8rem' }}>Cerebro de Programación — Línea Corrugadora</h2>
             <small style={{ color: '#64748b', fontWeight: 'bold' }}>
               Optimización de Anchos de Bobina, Trim Ideal, Claves de Material (TMC) y Sustitución Manual por Reserva de Stock
+              {origenPedidos && ` · Origen cola: ${origenPedidos}`}
             </small>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button
+            type="button"
             onClick={() => setModoVista('IA')}
             style={{
               padding: '9px 16px',
@@ -366,7 +378,9 @@ export default function PantallaProgramadorCorrugadora() {
           >
             🤖 Sugerencias IA (Trim)
           </button>
+
           <button
+            type="button"
             onClick={() => setModoVista('MANUAL')}
             style={{
               padding: '9px 16px',
@@ -380,7 +394,9 @@ export default function PantallaProgramadorCorrugadora() {
           >
             🛠️ Mesa Manual / Override ({pistasManuales.length})
           </button>
+
           <button
+            type="button"
             onClick={() => {
               setClaveEditando(infoClaveActual || claves[0] || null);
               setModoVista('MATRIZ_CLAVES');
@@ -395,17 +411,23 @@ export default function PantallaProgramadorCorrugadora() {
               cursor: 'pointer'
             }}
           >
+            📜 Matriz Claves y Gramajes
+          </button>
 
           <label style={{
-            padding: '9px 14px', borderRadius: '8px', backgroundColor: '#0f766e', color: '#fff',
-            fontWeight: 'bold', cursor: 'pointer', fontSize: '0.86rem'
+            padding: '9px 14px',
+            borderRadius: '8px',
+            backgroundColor: '#0f766e',
+            color: '#fff',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            fontSize: '0.86rem',
+            display: 'flex',
+            alignItems: 'center'
           }}>
             {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV (Claves / Papeles / Pendientes)'}
             <input type="file" accept=".csv" disabled={importandoCSV} onChange={handleImportarCSVCorrugadora} style={{ display: 'none' }} />
-            </label>
-
-            📜 Matriz Claves y Gramajes
-          </button>
+          </label>
         </div>
       </div>
 
@@ -463,10 +485,11 @@ export default function PantallaProgramadorCorrugadora() {
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '1.5rem' }}>
-            <div style={{ borderRight: '1px solid #e2e8f0', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ borderRight: '1px solid #e2e8f0', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '500px', overflowY: 'auto' }}>
               {claves.map(c => (
                 <button
                   key={c.clave}
+                  type="button"
                   onClick={() => setClaveEditando(c)}
                   style={{
                     padding: '10px 12px',
@@ -603,7 +626,11 @@ export default function PantallaProgramadorCorrugadora() {
                 return (
                   <button
                     key={c.clave}
-                    onClick={() => setClaveSeleccionada(c.clave)}
+                    type="button"
+                    onClick={() => {
+                      setClaveSeleccionada(c.clave);
+                      setOrdenesSeleccionadasIA([]);
+                    }}
                     style={{
                       padding: '5px 10px',
                       borderRadius: '6px',
@@ -622,10 +649,28 @@ export default function PantallaProgramadorCorrugadora() {
             </div>
 
             {infoClaveActual && (
-              <div style={{ backgroundColor: '#f5f3ff', padding: '8px 10px', borderRadius: '6px', fontSize: '0.78rem', marginBottom: '10px', border: '1px solid #ddd6fe' }}>
+              <div style={{ backgroundColor: '#f5f3ff', padding: '8px 10px', borderRadius: '6px', fontSize: '0.78rem', marginBottom: '8px', border: '1px solid #ddd6fe' }}>
                 <strong>Receta Ideal {infoClaveActual.clave}:</strong> {infoClaveActual.liner_ext_ideal} / {infoClaveActual.medium_ideal} / {infoClaveActual.liner_int_ideal}
               </div>
             )}
+
+            {/* Barra de selección puntual (Canasta del día) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '6px 8px', backgroundColor: ordenesSeleccionadasIA.length > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '6px', border: '1px solid #ddd6fe', fontSize: '0.78rem' }}>
+              <strong style={{ color: '#4c1d95' }}>
+                {ordenesSeleccionadasIA.length > 0
+                  ? `🎯 ${ordenesSeleccionadasIA.length} orden(es) elegidas para hoy`
+                  : `Evaluando todas (${pedidosFiltradosClave.length})`}
+              </strong>
+              {ordenesSeleccionadasIA.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setOrdenesSeleccionadasIA([])}
+                  style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.76rem' }}
+                >
+                  ✖ Limpiar selección
+                </button>
+              )}
+            </div>
 
             <div style={{ maxHeight: '560px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {cargando ? (
@@ -633,51 +678,61 @@ export default function PantallaProgramadorCorrugadora() {
               ) : pedidosFiltradosClave.length === 0 ? (
                 <p style={{ color: '#64748b', textAlign: 'center', fontStyle: 'italic' }}>No hay pedidos pendientes para esta clave.</p>
               ) : (
-                pedidosFiltradosClave.map(ord => (
-                  <div
-                    key={ord.numero_orden}
-                    style={{
-                      padding: '10px',
-                      borderRadius: '6px',
-                      border: '1px solid #e2e8f0',
-                      backgroundColor: '#fff',
-                      fontSize: '0.82rem'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <strong style={{ color: '#1e40af', fontSize: '0.92rem' }}>#{ord.numero_orden} · {ord.clave_material}</strong>
-                      <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: '4px', fontWeight: 'bold', fontSize: '0.75rem' }}>
-                        {ord.ancho_mm} × {ord.largo_mm} mm
-                      </span>
-                    </div>
-                    <div style={{ fontWeight: 'bold', color: '#1e293b', marginTop: '2px' }}>{ord.cliente}</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem' }}>{ord.producto_descripcion}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
-                      <span>Planchas: <strong>{ord.planchas_necesarias}</strong> ({ord.cantidad_pendiente} caj.)</span>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setForzarOrdenId(String(ord.numero_orden));
-                            ejecutarCerebroIA();
-                          }}
-                          style={{ padding: '3px 7px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
-                          title="Pedir a la IA combinaciones que incluyan esta orden"
-                        >
-                          🧠 Combinar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => agregarOrdenAMesaManual(ord)}
-                          style={{ padding: '3px 7px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
-                          title="Enviar a la Mesa Manual para armar tirada a dedo"
-                        >
-                          + Mesa
-                        </button>
+                pedidosFiltradosClave.map(ord => {
+                  const estaElegida = ordenesSeleccionadasIA.includes(Number(ord.numero_orden));
+                  return (
+                    <div
+                      key={ord.numero_orden}
+                      style={{
+                        padding: '10px',
+                        borderRadius: '6px',
+                        border: estaElegida ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+                        backgroundColor: estaElegida ? '#f5f3ff' : '#fff',
+                        fontSize: '0.82rem'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={estaElegida}
+                            onChange={() => toggleSeleccionOrdenIA(ord.numero_orden)}
+                          />
+                          <strong style={{ color: '#1e40af', fontSize: '0.92rem' }}>#{ord.numero_orden} · {ord.clave_material}</strong>
+                        </label>
+                        <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: '4px', fontWeight: 'bold', fontSize: '0.75rem' }}>
+                          {ord.ancho_mm} × {ord.largo_mm} mm
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 'bold', color: '#1e293b', marginTop: '2px' }}>{ord.cliente}</div>
+                      <div style={{ color: '#64748b', fontSize: '0.76rem' }}>{ord.producto_descripcion}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
+                        <span>Planchas: <strong>{ord.planchas_necesarias}</strong> ({ord.cantidad_pendiente} caj.)</span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setForzarOrdenId(String(ord.numero_orden));
+                              ejecutarCerebroIA();
+                            }}
+                            style={{ padding: '3px 7px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
+                            title="Pedir a la IA combinaciones que incluyan esta orden"
+                          >
+                            🧠 Combinar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => agregarOrdenAMesaManual(ord)}
+                            style={{ padding: '3px 7px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
+                            title="Enviar a la Mesa Manual para armar tirada a dedo"
+                          >
+                            + Mesa
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -819,7 +874,7 @@ export default function PantallaProgramadorCorrugadora() {
                     {propuestasIA.map((prop, idx) => (
                       <div key={idx} style={{ border: '2px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px', backgroundColor: idx === 0 ? '#f0fdf4' : '#fff' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <span style={{ backgroundColor: '#4c1d95', color: '#fff', padding: '3px 9px', borderRadius: '12px', fontSize: '0.78rem', fontWeight: 'bold' }}>
                               Score IA: {prop.score_ia}/100
                             </span>
@@ -832,6 +887,11 @@ export default function PantallaProgramadorCorrugadora() {
                             <span style={{ color: '#0284c7', fontWeight: 'bold', fontSize: '0.9rem' }}>
                               · Corrida: {prop.metros_lineales} mts
                             </span>
+                            {prop.consumo_estimado_kg > 0 && (
+                              <span style={{ color: '#475569', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                                · ~{prop.consumo_estimado_kg} kg
+                              </span>
+                            )}
                           </div>
 
                           <div style={{ display: 'flex', gap: '6px' }}>
