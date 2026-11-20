@@ -11,6 +11,7 @@ import PantallaExpedicion from './components/PantallaExpedicion';
 import PantallaCargaManual from './components/PantallaCargaManual'; // 👈 NUEVA CONSOLA DE PARTES FÍSICOS
 import PantallaHerramentales from './components/PantallaHerramentales';
 import PantallaProgramadorCorrugadora from './components/PantallaProgramadorCorrugadora';
+import PantallaMaquinistaCorrugadora from './components/PantallaMaquinistaCorrugadora';
 
 export default function App() {
   const [usuarioActual, setUsuarioActual] = useState(null);
@@ -170,6 +171,14 @@ export default function App() {
             </button>
           )}
 
+          {tienePermiso('maquinista') && (
+            <button
+              onClick={() => setRolActivo('maquinista-corrugadora')}
+              style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#0f766e', color: 'white', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
+              🏭 Cabina Corrugadora
+            </button>
+         )}
+
           {tienePermiso('configuracion') && (
             <button 
               onClick={() => setRolActivo('configuracion')}
@@ -235,6 +244,7 @@ export default function App() {
         {rolActivo === 'expedicion' && <PantallaExpedicion />}
         {rolActivo === 'herramentales' && <PantallaHerramentales />}
         {rolActivo === 'corrugadora' && <PantallaProgramadorCorrugadora />}
+        {rolActivo === 'maquinista-corrugadora' && <PantallaMaquinistaCorrugadora />}
       </div>
 
     </div>
