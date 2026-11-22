@@ -54,29 +54,104 @@ export default function PantallaMaquinistaCorrugadora() {
   const activa = cola[0] || null;
   const siguientes = cola.slice(1);
 
-  const renderPortabobinas = (receta) => {
+  const renderPortabobinas = (prog) => {
+    const receta = prog.receta;
     if (!receta) {
-      return <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Sin receta detallada cargada para esta clave.</div>;
+      return (
+        <div style={{ backgroundColor: '#0f172a', padding: '10px 14px', borderRadius: '8px', color: '#fbbf24', fontSize: '0.92rem', border: '1px dashed #f59e0b' }}>
+          ⚠️ Clave <strong>{prog.clave_material}</strong> sin receta en CLAVES.csv. Verificar papeles con Programación.
+        </div>
+      );
     }
+
     const estaciones = [
-      { titulo: '1. LINER EXT', papel: receta.liner_ext_ideal, gr: receta.liner_ext_gramaje },
-      { titulo: '2. ONDA 1', papel: receta.medium_ideal, gr: receta.onda1_gramaje },
+      {
+        titulo: '1. LINER EXT',
+        papel: prog.es_blanco ? `BLANCO (${receta.liner_ext_ideal || 'Liner'})` : (receta.liner_ext_ideal || 'Estándar'),
+        gr: receta.liner_ext_gramaje,
+        res: receta.liner_ext_rct ? `RCT ${receta.liner_ext_rct}` : '',
+        esBlanco: prog.es_blanco
+      },
+      {
+        titulo: '2. ONDA 1',
+        papel: receta.medium_ideal || 'Onda',
+        gr: receta.onda1_gramaje,
+        res: receta.onda1_cct ? `CCT ${receta.onda1_cct}` : ''
+      },
       ...(receta.es_doble_onda ? [
-        { titulo: '3. ENTRETAPA', papel: receta.entretapa_ideal, gr: receta.entretapa_gramaje },
-        { titulo: '4. ONDA 2', papel: receta.onda2_ideal, gr: receta.onda2_gramaje }
+        {
+          titulo: '3. ENTRETAPA',
+          papel: receta.entretapa_ideal || 'Entretapa',
+          gr: receta.entretapa_gramaje,
+          res: receta.entretapa_rct ? `RCT ${receta.entretapa_rct}` : ''
+        },
+        {
+          titulo: '4. ONDA 2',
+          papel: receta.onda2_ideal || 'Onda',
+          gr: receta.onda2_gramaje,
+          res: receta.onda2_cct ? `CCT ${receta.onda2_cct}` : ''
+        }
       ] : []),
-      { titulo: receta.es_doble_onda ? '5. LINER INT' : '3. LINER INT', papel: receta.liner_int_ideal, gr: receta.liner_int_gramaje }
+      {
+        titulo: receta.es_doble_onda ? '5. LINER INT' : '3. LINER INT',
+        papel: receta.liner_int_ideal || 'Liner Int',
+        gr: receta.liner_int_gramaje,
+        res: receta.liner_int_rct ? `RCT ${receta.liner_int_rct}` : ''
+      }
     ];
 
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${estaciones.length}, 1fr)`, gap: '10px' }}>
-        {estaciones.map((est, i) => (
-          <div key={i} style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 'bold' }}>{est.titulo}</div>
-            <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#fff', marginTop: '4px' }}>{est.papel || 'Estándar'}</div>
-            {Number(est.gr) > 0 && <div style={{ fontSize: '0.85rem', color: '#cbd5e1' }}>{est.gr} g/m²</div>}
-          </div>
-        ))}
+      <div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+          <span style={{ backgroundColor: '#334155', color: '#e2e8f0', padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold' }}>
+            {receta.es_doble_onda ? '🧱 DOBLE ONDA (5 PAPELES)' : `📄 SIMPLE ONDA ${receta.onda || 'C'} (3 PAPELES)`}
+          </span>
+          {prog.es_rh && (
+            <span style={{ backgroundColor: '#0284c7', color: '#fff', padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold' }}>
+              💧 ADHESIVO RH (RESISTENTE A HUMEDAD)
+            </span>
+          )}
+          {prog.es_blanco && (
+            <span style={{ backgroundColor: '#f8fafc', color: '#0f172a', padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold' }}>
+              ⚪ TAPA EXTERIOR BLANCA
+            </span>
+          )}
+          {Number(prog.consumo_estimado_kg) > 0 && (
+            <span style={{ backgroundColor: '#1e293b', color: '#a7f3d0', padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 'bold', border: '1px solid #334155' }}>
+              ⚖️ Consumo est.: ~{Math.round(prog.consumo_estimado_kg)} kg
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${estaciones.length}, 1fr)`, gap: '10px' }}>
+          {estaciones.map((est, i) => (
+            <div key={i} style={{
+              backgroundColor: est.esBlanco ? '#f8fafc' : '#0f172a',
+              color: est.esBlanco ? '#0f172a' : '#fff',
+              border: est.esBlanco ? '2px solid #cbd5e1' : '1px solid #334155',
+              borderRadius: '8px',
+              padding: '10px',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '0.75rem', color: est.esBlanco ? '#0369a1' : '#38bdf8', fontWeight: 'bold' }}>
+                {est.titulo}
+              </div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 'bold', marginTop: '4px' }}>
+                {est.papel}
+              </div>
+              {Number(est.gr) > 0 && (
+                <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: est.esBlanco ? '#1e293b' : '#fbbf24', marginTop: '2px' }}>
+                  {est.gr} g/m²
+                </div>
+              )}
+              {est.res && (
+                <div style={{ fontSize: '0.76rem', color: est.esBlanco ? '#475569' : '#94a3b8', marginTop: '2px' }}>
+                  Mín: {est.res}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
@@ -148,7 +223,7 @@ export default function PantallaMaquinistaCorrugadora() {
             {/* BLOQUE 2: MAPA DE PORTABOBINAS */}
             <div style={{ marginBottom: '14px' }}>
               <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontWeight: 'bold', marginBottom: '6px' }}>🧻 MONTAJE DE PORTABOBINAS</div>
-              {renderPortabobinas(activa.receta)}
+              {renderPortabobinas(activa)}
             </div>
 
             {/* BLOQUE 3: SLITTER (MÁX 5) Y GUILLOTINA DUAL (MÁX 2 LARGOS) */}
