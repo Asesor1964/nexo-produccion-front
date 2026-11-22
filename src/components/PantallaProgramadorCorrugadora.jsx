@@ -14,6 +14,7 @@ export default function PantallaProgramadorCorrugadora() {
   // Filtros y Parámetros del Cerebro IA
   const [claveSeleccionada, setClaveSeleccionada] = useState('');
   const [clavesCompatiblesExtra, setClavesCompatiblesExtra] = useState([]);
+  const [ocultarClavesVacias, setOcultarClavesVacias] = useState(true);
   const [ordenesSeleccionadasIA, setOrdenesSeleccionadasIA] = useState([]);
   const [trimMaxPct, setTrimMaxPct] = useState(5.0);
   const [forzarOrdenId, setForzarOrdenId] = useState('');
@@ -23,11 +24,12 @@ export default function PantallaProgramadorCorrugadora() {
   const [propuestasIA, setPropuestasIA] = useState([]);
   const [calculandoIA, setCalculandoIA] = useState(false);
 
-  // 🛠️ MESA DE FORZADO / OVERRIDE MANUAL & PAPEL ALTERNATIVO
-  const [modoVista, setModoVista] = useState('IA'); // 'IA' | 'MANUAL' | 'MATRIZ_CLAVES'
+  // 🛠️ MESA DE FORZADO / OVERRIDE MANUAL & EDICIÓN DE COLA
+  const [modoVista, setModoVista] = useState('IA'); // 'IA' | 'MANUAL' | 'COLA' | 'MATRIZ_CLAVES'
   const [bobinaManual, setBobinaManual] = useState(2050);
   const [pistasManuales, setPistasManuales] = useState([]); // [{ orden, salidas }]
   const [metrosManuales, setMetrosManuales] = useState(500);
+  const [editandoProgramaId, setEditandoProgramaId] = useState(null);
 
   // Selector de Papel Ideal vs Papel Alternativo Manual (Reserva de Stock)
   const [usarPapelAlternativo, setUsarPapelAlternativo] = useState(false);
@@ -42,21 +44,32 @@ export default function PantallaProgramadorCorrugadora() {
   const [claveEditando, setClaveEditando] = useState(null);
   const [nuevaAlternativaTexto, setNuevaAlternativaTexto] = useState('');
 
+  // Solo claves de Corrugadora de Conversión (todas empiezan con "T")
+  const esClaveCorrugadoraConversion = (claveStr) =>
+    String(claveStr || '').trim().toUpperCase().startsWith('T');
+
   const cargarContexto = async () => {
     setCargando(true);
     try {
       const res = await apiFetch('/api/corrugadora/contexto');
       if (res.ok) {
         const data = await res.json();
+        const listaClaves = data.claves || [];
+        const listaPedidos = data.pedidos || [];
         setAnchos(data.anchos || []);
-        setClaves(data.claves || []);
-        setPedidos(data.pedidos || []);
+        setClaves(listaClaves);
+        setPedidos(listaPedidos);
         setProgramas(data.programas || []);
         setPapelesStock(data.papeles_stock || []);
         setOrigenPedidos(data.origen_pedidos || '');
 
-        if (!claveSeleccionada && data.claves && data.claves.length > 0) {
-          setClaveSeleccionada(data.claves[0].clave);
+        if (!claveSeleccionada && listaClaves.length > 0) {
+          const primeraTConPedidos = listaClaves.find(
+            c => esClaveCorrugadoraConversion(c.clave) && listaPedidos.some(p => p.clave_material === c.clave)
+          );
+          const primeraT = listaClaves.find(c => esClaveCorrugadoraConversion(c.clave));
+          if (primeraTConPedidos) setClaveSeleccionada(primeraTConPedidos.clave);
+          else if (primeraT) setClaveSeleccionada(primeraT.clave);
         }
       }
     } catch (error) {
@@ -73,6 +86,44 @@ export default function PantallaProgramadorCorrugadora() {
   const anchosActivos = anchos.filter(a => a.activo).map(a => a.ancho_mm);
   const infoClaveActual = claves.find(c => c.clave === claveSeleccionada) || null;
 
+  const clavesVisibles = claves.filter(c => {
+    if (!esClaveCorrugadoraConversion(c.clave)) return false;
+    if (!ocultarClavesVacias) return true;
+    const tienePedidos = pedidos.some(p => p.clave_material === c.clave);
+    const estaActiva = c.clave === claveSeleccionada || clavesCompatiblesExtra.includes(c.clave);
+    return tienePedidos || estaActiva;
+  });
+
+  const programasActivos = programas
+    .filter(p => p.estado === 'En Proceso' || p.estado === 'Programada')
+    .sort((a, b) => {
+      if (a.estado === 'En Proceso' && b.estado !== 'En Proceso') return -1;
+      if (b.estado === 'En Proceso' && a.estado !== 'En Proceso') return 1;
+      return (a.prioridad_secuencia || 999) - (b.prioridad_secuencia || 999) || a.id - b.id;
+    });
+
+  const toggleClaveSeleccionada = (clave) => {
+    setForzarOrdenId('');
+    setPropuestasIA([]);
+
+    if (claveSeleccionada === clave) {
+      if (clavesCompatiblesExtra.length > 0) {
+        const [nuevaPrincipal, ...resto] = clavesCompatiblesExtra;
+        setClaveSeleccionada(nuevaPrincipal);
+        setClavesCompatiblesExtra(resto);
+      }
+      return;
+    }
+
+    if (clavesCompatiblesExtra.includes(clave)) {
+      setClavesCompatiblesExtra(prev => prev.filter(c => c !== clave));
+    } else if (!claveSeleccionada) {
+      setClaveSeleccionada(clave);
+    } else {
+      setClavesCompatiblesExtra(prev => [...prev, clave]);
+    }
+  };
+
   const toggleSeleccionOrdenIA = (numOrden) => {
     const num = Number(numOrden);
     setOrdenesSeleccionadasIA(prev =>
@@ -80,7 +131,6 @@ export default function PantallaProgramadorCorrugadora() {
     );
   };
 
-  // Agregar nuevo ancho de bobina al pañol
   const handleAgregarAncho = async (e) => {
     e.preventDefault();
     const val = parseInt(nuevoAnchoInput, 10);
@@ -125,7 +175,6 @@ export default function PantallaProgramadorCorrugadora() {
 
         const header = lineas[0].toLowerCase();
 
-        // 1. Detectar CLAVES.csv
         if (header.includes('liner.ext') && header.includes('clave')) {
           const clavesPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
@@ -145,9 +194,7 @@ export default function PantallaProgramadorCorrugadora() {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-        }
-        // 2. Detectar REGISTRO DE PAPELES.csv o Bobinas.csv
-        else if (header.includes('tipo de papel') && header.includes('stock')) {
+        } else if (header.includes('tipo de papel') && header.includes('stock')) {
           const papelesPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
             return {
@@ -164,9 +211,7 @@ export default function PantallaProgramadorCorrugadora() {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-        }
-        // 3. Detectar PENDIENTES DE CORRUGADORA.csv
-        else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
+        } else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
           const pendientesPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
             return {
@@ -224,9 +269,15 @@ export default function PantallaProgramadorCorrugadora() {
           ordenes_seleccionadas: ordenesSeleccionadasIA
         })
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        setPropuestasIA(data.propuestas || []);
+        const lista = data.propuestas || [];
+        setPropuestasIA(lista);
+        if (lista.length === 0) {
+          alert(`⚠️ El motor evaluó ${data.total_candidatos ?? 0} orden(es) pero ninguna combinación entró en el Trim Máx (${trimMaxPct}%).\n\nRevisá: Bobinas activas, "Forzar Bobina" o "Incluir Orden #".`);
+        }
+      } else {
+        alert(`❌ Error del servidor: ${data.error || 'No se pudo calcular'}`);
       }
     } catch (error) {
       alert('❌ Error al consultar el motor optimizador.');
@@ -235,8 +286,8 @@ export default function PantallaProgramadorCorrugadora() {
     }
   };
 
-  // Cargar una propuesta de la IA en la Mesa Manual para retocarla si se desea
   const llevarPropuestaAMesaManual = (prop) => {
+    setEditandoProgramaId(null);
     setBobinaManual(prop.ancho_bobina_mm);
     setMetrosManuales(prop.metros_lineales);
     const pistasMapeadas = prop.pistas.map(p => {
@@ -247,7 +298,21 @@ export default function PantallaProgramadorCorrugadora() {
     setModoVista('MANUAL');
   };
 
-  // Agregar orden a la Mesa Manual
+  const editarProgramaEnMesa = (prog) => {
+    setEditandoProgramaId(prog.id);
+    setBobinaManual(Number(prog.ancho_bobina_mm) || 2050);
+    setMetrosManuales(Number(prog.metros_lineales) || 500);
+    const pistasMapeadas = (prog.pistas_detalle || []).map(p => {
+      const ordFull = pedidos.find(x => Number(x.numero_orden) === Number(p.numero_orden)) || p;
+      return { orden: ordFull, salidas: Number(p.salidas) || 1 };
+    });
+    setPistasManuales(pistasMapeadas);
+    setUsarPapelAlternativo(Boolean(prog.es_alternativa_manual));
+    setPapelAlternativoElegido(prog.es_alternativa_manual ? String(prog.papel_utilizado || '').replace(/^ALTERNATIVO:\s*/i, '') : '');
+    setMotivoAlternativa(prog.motivo_alternativa || '');
+    setModoVista('MANUAL');
+  };
+
   const agregarOrdenAMesaManual = (ord) => {
     if (pistasManuales.some(p => Number(p.orden.numero_orden) === Number(ord.numero_orden))) return;
     setPistasManuales([...pistasManuales, { orden: ord, salidas: 1 }]);
@@ -265,12 +330,37 @@ export default function PantallaProgramadorCorrugadora() {
     setPistasManuales(pistasManuales.filter((_, i) => i !== idx));
   };
 
-  // Cálculos en vivo de la Mesa Manual
+  const moverEnCola = async (index, direccion) => {
+    const lista = [...programasActivos];
+    const destino = index + direccion;
+    if (destino < 0 || destino >= lista.length) return;
+    if (lista[index].estado === 'En Proceso' || lista[destino].estado === 'En Proceso') return;
+
+    const [item] = lista.splice(index, 1);
+    lista.splice(destino, 0, item);
+
+    try {
+      await apiFetch('/api/corrugadora/programas/reordenar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ordenIds: lista.map(p => p.id) })
+      });
+      cargarContexto();
+    } catch (e) {}
+  };
+
+  const eliminarPrograma = async (prog) => {
+    if (!window.confirm(`🗑️ ¿Quitar la tirada ${prog.codigo_tirada} de la cola de Corrugadora?`)) return;
+    try {
+      await apiFetch(`/api/corrugadora/programas/${prog.id}`, { method: 'DELETE' });
+      cargarContexto();
+    } catch (e) {}
+  };
+
   const anchoOcupadoManual = pistasManuales.reduce((acc, p) => acc + (Number(p.orden.ancho_mm) || 0) * p.salidas, 0);
   const trimManualMm = Number(bobinaManual) - anchoOcupadoManual;
   const trimManualPct = Number(bobinaManual) > 0 ? Number(((trimManualMm / Number(bobinaManual)) * 100).toFixed(2)) : 0;
 
-  // Aprobar y enviar tirada (tanto desde Propuesta IA como desde Mesa Manual)
   const aprobarTirada = async (datosTirada) => {
     if (usarPapelAlternativo && !papelAlternativoElegido.trim()) {
       alert('⚠️ Indicá qué papel/gramaje alternativo vas a utilizar o destildá la opción de papel alternativo.');
@@ -281,8 +371,9 @@ export default function PantallaProgramadorCorrugadora() {
       ? `ALTERNATIVO: ${papelAlternativoElegido.trim()}`
       : `IDEAL (${datosTirada.clave_material}): ${infoClaveActual?.liner_ext_ideal || 'Estándar'}`;
 
+    const esEdicion = Boolean(editandoProgramaId && modoVista === 'MANUAL');
     const confirmar = window.confirm(
-      `🚀 ¿Confirmás programar esta tirada en Corrugadora?\n\n` +
+      `${esEdicion ? '💾 ¿Guardar cambio de combinación en esta tirada?' : '🚀 ¿Confirmás programar esta tirada en Corrugadora?'}\n\n` +
       `• Bobina Madre: ${datosTirada.ancho_bobina_mm} mm\n` +
       `• Trim / Refile: ${datosTirada.trim_mm} mm (${datosTirada.trim_porcentaje}%)\n` +
       `• Corrida: ${datosTirada.metros_lineales} metros lineales\n` +
@@ -291,8 +382,11 @@ export default function PantallaProgramadorCorrugadora() {
     if (!confirmar) return;
 
     try {
-      const res = await apiFetch('/api/corrugadora/aprobar-tirada', {
-        method: 'POST',
+      const url = esEdicion ? `/api/corrugadora/programas/${editandoProgramaId}` : '/api/corrugadora/aprobar-tirada';
+      const method = esEdicion ? 'PUT' : 'POST';
+
+      const res = await apiFetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...datosTirada,
@@ -305,6 +399,7 @@ export default function PantallaProgramadorCorrugadora() {
       const data = await res.json();
       if (res.ok) {
         alert(`✅ ${data.mensaje}`);
+        setEditandoProgramaId(null);
         setUsarPapelAlternativo(false);
         setMotivoAlternativa('');
         cargarContexto();
@@ -316,7 +411,6 @@ export default function PantallaProgramadorCorrugadora() {
     }
   };
 
-  // Guardar Matriz de Equivalencias de Clave
   const guardarMatrizClave = async (e) => {
     e.preventDefault();
     if (!claveEditando) return;
@@ -335,6 +429,7 @@ export default function PantallaProgramadorCorrugadora() {
   };
 
   const pedidosFiltradosClave = pedidos.filter(p => {
+    if (!esClaveCorrugadoraConversion(p.clave_material)) return false;
     if (!claveSeleccionada) return true;
     return p.clave_material === claveSeleccionada || clavesCompatiblesExtra.includes(p.clave_material);
   });
@@ -356,7 +451,7 @@ export default function PantallaProgramadorCorrugadora() {
           <div>
             <h2 style={{ margin: 0, color: '#4c1d95', fontSize: '1.8rem' }}>Cerebro de Programación — Línea Corrugadora</h2>
             <small style={{ color: '#64748b', fontWeight: 'bold' }}>
-              Optimización de Anchos de Bobina, Trim Ideal, Claves de Material (TMC) y Sustitución Manual por Reserva de Stock
+              Optimización de Anchos de Bobina, Trim Ideal, Claves de Conversión (T*) y Cola en Vivo
               {origenPedidos && ` · Origen cola: ${origenPedidos}`}
             </small>
           </div>
@@ -367,65 +462,58 @@ export default function PantallaProgramadorCorrugadora() {
             type="button"
             onClick={() => setModoVista('IA')}
             style={{
-              padding: '9px 16px',
-              borderRadius: '8px',
-              border: '2px solid #7c3aed',
+              padding: '9px 14px', borderRadius: '8px', border: '2px solid #7c3aed',
               backgroundColor: modoVista === 'IA' ? '#7c3aed' : '#fff',
-              color: modoVista === 'IA' ? '#fff' : '#7c3aed',
-              fontWeight: 'bold',
-              cursor: 'pointer'
+              color: modoVista === 'IA' ? '#fff' : '#7c3aed', fontWeight: 'bold', cursor: 'pointer'
             }}
           >
-            🤖 Sugerencias IA (Trim)
+            🤖 Sugerencias IA
           </button>
 
           <button
             type="button"
             onClick={() => setModoVista('MANUAL')}
             style={{
-              padding: '9px 16px',
-              borderRadius: '8px',
-              border: '2px solid #0284c7',
+              padding: '9px 14px', borderRadius: '8px', border: '2px solid #0284c7',
               backgroundColor: modoVista === 'MANUAL' ? '#0284c7' : '#fff',
-              color: modoVista === 'MANUAL' ? '#fff' : '#0284c7',
-              fontWeight: 'bold',
-              cursor: 'pointer'
+              color: modoVista === 'MANUAL' ? '#fff' : '#0284c7', fontWeight: 'bold', cursor: 'pointer'
             }}
           >
-            🛠️ Mesa Manual / Override ({pistasManuales.length})
+            🛠️ Mesa Manual ({pistasManuales.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModoVista('COLA')}
+            style={{
+              padding: '9px 14px', borderRadius: '8px', border: '2px solid #16a34a',
+              backgroundColor: modoVista === 'COLA' ? '#16a34a' : '#fff',
+              color: modoVista === 'COLA' ? '#fff' : '#15803d', fontWeight: 'bold', cursor: 'pointer'
+            }}
+          >
+            📋 Cola Corrugadora ({programasActivos.length})
           </button>
 
           <button
             type="button"
             onClick={() => {
-              setClaveEditando(infoClaveActual || claves[0] || null);
+              setClaveEditando(infoClaveActual || clavesVisibles[0] || null);
               setModoVista('MATRIZ_CLAVES');
             }}
             style={{
-              padding: '9px 16px',
-              borderRadius: '8px',
-              border: '2px solid #d97706',
+              padding: '9px 14px', borderRadius: '8px', border: '2px solid #d97706',
               backgroundColor: modoVista === 'MATRIZ_CLAVES' ? '#d97706' : '#fff',
-              color: modoVista === 'MATRIZ_CLAVES' ? '#fff' : '#b45309',
-              fontWeight: 'bold',
-              cursor: 'pointer'
+              color: modoVista === 'MATRIZ_CLAVES' ? '#fff' : '#b45309', fontWeight: 'bold', cursor: 'pointer'
             }}
           >
-            📜 Matriz Claves y Gramajes
+            📜 Matriz Claves
           </button>
 
           <label style={{
-            padding: '9px 14px',
-            borderRadius: '8px',
-            backgroundColor: '#0f766e',
-            color: '#fff',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            fontSize: '0.86rem',
-            display: 'flex',
-            alignItems: 'center'
+            padding: '9px 14px', borderRadius: '8px', backgroundColor: '#0f766e', color: '#fff',
+            fontWeight: 'bold', cursor: 'pointer', fontSize: '0.86rem', display: 'flex', alignItems: 'center'
           }}>
-            {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV (Claves / Papeles / Pendientes)'}
+            {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV'}
             <input type="file" accept=".csv" disabled={importandoCSV} onChange={handleImportarCSVCorrugadora} style={{ display: 'none' }} />
           </label>
         </div>
@@ -441,16 +529,12 @@ export default function PantallaProgramadorCorrugadora() {
               type="button"
               onClick={() => toggleAnchoBobina(a.id)}
               style={{
-                padding: '5px 11px',
-                borderRadius: '20px',
+                padding: '5px 11px', borderRadius: '20px',
                 border: a.activo ? '2px solid #0f172a' : '1px solid #cbd5e1',
                 backgroundColor: a.activo ? '#0f172a' : '#f1f5f9',
                 color: a.activo ? '#38bdf8' : '#64748b',
-                fontWeight: 'bold',
-                fontSize: '0.82rem',
-                cursor: 'pointer'
+                fontWeight: 'bold', fontSize: '0.82rem', cursor: 'pointer'
               }}
-              title="Clic para activar/desactivar este ancho según stock de bobinas"
             >
               {a.activo ? '✓ ' : ''}{a.ancho_mm} mm
             </button>
@@ -459,46 +543,77 @@ export default function PantallaProgramadorCorrugadora() {
 
         <form onSubmit={handleAgregarAncho} style={{ display: 'flex', gap: '6px' }}>
           <input
-            type="number"
-            min="600"
-            max="3200"
-            placeholder="+ Ancho mm (ej. 2200)"
-            value={nuevoAnchoInput}
-            onChange={(e) => setNuevoAnchoInput(e.target.value)}
+            type="number" min="600" max="3200" placeholder="+ Ancho mm (ej. 2200)"
+            value={nuevoAnchoInput} onChange={(e) => setNuevoAnchoInput(e.target.value)}
             style={{ width: '155px', padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.84rem' }}
           />
-          <button
-            type="submit"
-            style={{ padding: '6px 12px', backgroundColor: '#334155', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.82rem', cursor: 'pointer' }}
-          >
+          <button type="submit" style={{ padding: '6px 12px', backgroundColor: '#334155', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.82rem', cursor: 'pointer' }}>
             + Sumar Formato
           </button>
         </form>
       </div>
 
-      {/* VISTA 3: MATRIZ DE EQUIVALENCIAS DE CLAVES Y PAPELES */}
+      {/* VISTA: COLA DE FABRICACIÓN EN VIVO (SECUENCIADOR) */}
+      {modoVista === 'COLA' && (
+        <div style={{ backgroundColor: '#fff', padding: '1.4rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderTop: '5px solid #16a34a', marginBottom: '1.5rem' }}>
+          <h3 style={{ marginTop: 0, color: '#15803d' }}>📋 Cola de Fabricación de Corrugadora (Vista en Vivo del Maquinista)</h3>
+          {programasActivos.length === 0 ? (
+            <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>No hay tiradas programadas todavía. Aprobá una desde Sugerencias IA o Mesa Manual.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {programasActivos.map((prog, idx) => (
+                <div key={prog.id} style={{ border: prog.estado === 'En Proceso' ? '2px solid #16a34a' : '1px solid #cbd5e1', borderRadius: '8px', padding: '12px', backgroundColor: prog.estado === 'En Proceso' ? '#f0fdf4' : '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ backgroundColor: prog.estado === 'En Proceso' ? '#16a34a' : '#334155', color: '#fff', padding: '2px 9px', borderRadius: '12px', fontWeight: 'bold', fontSize: '0.8rem' }}>
+                        #{idx + 1} · {prog.estado}
+                      </span>
+                      <strong>{prog.codigo_tirada}</strong>
+                      <span style={{ color: '#7c3aed', fontWeight: 'bold' }}>{prog.clave_material}</span>
+                      <span>Bobina <strong>{prog.ancho_bobina_mm} mm</strong></span>
+                      <span>Trim <strong>{prog.trim_mm} mm ({prog.trim_porcentaje}%)</strong></span>
+                      <span>Corrida <strong>{prog.metros_lineales} mts</strong></span>
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: '#475569', marginTop: '4px' }}>
+                      {(prog.pistas_detalle || []).map(p => `OP #${p.numero_orden} (${p.salidas}×${p.ancho_mm}mm · ${p.planchas_tirada} pl.)`).join('  +  ')}
+                    </div>
+                  </div>
+
+                  {prog.estado === 'Programada' && (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button type="button" onClick={() => moverEnCola(idx, -1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Subir puesto">⬆️</button>
+                      <button type="button" onClick={() => moverEnCola(idx, 1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Bajar puesto">⬇️</button>
+                      <button type="button" onClick={() => editarProgramaEnMesa(prog)} style={{ padding: '5px 10px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #0284c7', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                        ✏️ Cambiar Combinación
+                      </button>
+                      <button type="button" onClick={() => eliminarPrograma(prog)} style={{ padding: '5px 9px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', cursor: 'pointer' }}>
+                        🗑️
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VISTA: MATRIZ DE EQUIVALENCIAS DE CLAVES Y PAPELES */}
       {modoVista === 'MATRIZ_CLAVES' && (
         <div style={{ backgroundColor: '#fff', padding: '1.5rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderTop: '5px solid #d97706', marginBottom: '1.5rem' }}>
-          <h3 style={{ marginTop: 0, color: '#92400e' }}>📜 Configuración de Claves de Material (TMC) y Papeles Alternativos Aprobados</h3>
-          <p style={{ fontSize: '0.88rem', color: '#475569' }}>
-            Definí la receta ideal de cada clave y cargá qué combinaciones de papel/gramaje alternativo cumplen técnicamente cuando reservamos el papel ideal para otro producto.
-          </p>
-
+          <h3 style={{ marginTop: 0, color: '#92400e' }}>📜 Configuración de Claves de Material (T*) y Papeles Alternativos Aprobados</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '1.5rem' }}>
             <div style={{ borderRight: '1px solid #e2e8f0', paddingRight: '1rem', display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '500px', overflowY: 'auto' }}>
-              {claves.map(c => (
+              {claves.filter(c => esClaveCorrugadoraConversion(c.clave)).map(c => (
                 <button
                   key={c.clave}
                   type="button"
                   onClick={() => setClaveEditando(c)}
                   style={{
-                    padding: '10px 12px',
-                    textAlign: 'left',
-                    borderRadius: '6px',
+                    padding: '10px 12px', textAlign: 'left', borderRadius: '6px',
                     border: claveEditando?.clave === c.clave ? '2px solid #d97706' : '1px solid #cbd5e1',
                     backgroundColor: claveEditando?.clave === c.clave ? '#fef3c7' : '#f8fafc',
-                    fontWeight: 'bold',
-                    cursor: 'pointer'
+                    fontWeight: 'bold', cursor: 'pointer'
                   }}
                 >
                   {c.clave} <span style={{ fontSize: '0.75rem', color: '#64748b' }}>({c.onda || 'Onda C'})</span>
@@ -512,11 +627,7 @@ export default function PantallaProgramadorCorrugadora() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '12px' }}>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Tipo Onda:</label>
-                    <select
-                      value={claveEditando.onda || 'C'}
-                      onChange={e => setClaveEditando({ ...claveEditando, onda: e.target.value })}
-                      style={{ width: '100%', padding: '7px' }}
-                    >
+                    <select value={claveEditando.onda || 'C'} onChange={e => setClaveEditando({ ...claveEditando, onda: e.target.value })} style={{ width: '100%', padding: '7px' }}>
                       <option value="B">Onda B</option>
                       <option value="C">Onda C</option>
                       <option value="CB">Doble Onda CB</option>
@@ -525,48 +636,24 @@ export default function PantallaProgramadorCorrugadora() {
                   </div>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Liner Exterior Ideal:</label>
-                    <input
-                      type="text"
-                      value={claveEditando.liner_ext_ideal || ''}
-                      onChange={e => setClaveEditando({ ...claveEditando, liner_ext_ideal: e.target.value })}
-                      placeholder="Ej: Kraft 150g"
-                      style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }}
-                    />
+                    <input type="text" value={claveEditando.liner_ext_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, liner_ext_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Onda / Medium Ideal:</label>
-                    <input
-                      type="text"
-                      value={claveEditando.medium_ideal || ''}
-                      onChange={e => setClaveEditando({ ...claveEditando, medium_ideal: e.target.value })}
-                      placeholder="Ej: Semiquímico 120g"
-                      style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }}
-                    />
+                    <input type="text" value={claveEditando.medium_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, medium_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Liner Interior Ideal:</label>
-                    <input
-                      type="text"
-                      value={claveEditando.liner_int_ideal || ''}
-                      onChange={e => setClaveEditando({ ...claveEditando, liner_int_ideal: e.target.value })}
-                      placeholder="Ej: Testliner 140g"
-                      style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }}
-                    />
+                    <input type="text" value={claveEditando.liner_int_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, liner_int_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
                   </div>
                 </div>
 
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '12px' }}>
                   <label style={{ fontSize: '0.84rem', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>
-                    🔄 Papeles / Gramajes Alternativos Aprobados por Stock (para reservar el ideal):
+                    🔄 Papeles / Gramajes Alternativos Aprobados por Stock:
                   </label>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                    <input
-                      type="text"
-                      placeholder="Ej: Kraft 165g + Onda 125g + Kraft 150g (Mayor resistencia)"
-                      value={nuevaAlternativaTexto}
-                      onChange={e => setNuevaAlternativaTexto(e.target.value)}
-                      style={{ flex: 1, padding: '7px', borderRadius: '5px', border: '1px solid #ccc' }}
-                    />
+                    <input type="text" placeholder="Ej: Kraft 165g + Onda 125g + Kraft 150g" value={nuevaAlternativaTexto} onChange={e => setNuevaAlternativaTexto(e.target.value)} style={{ flex: 1, padding: '7px', borderRadius: '5px', border: '1px solid #ccc' }} />
                     <button
                       type="button"
                       onClick={() => {
@@ -580,30 +667,17 @@ export default function PantallaProgramadorCorrugadora() {
                       + Agregar Alternativa
                     </button>
                   </div>
-
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                     {(Array.isArray(claveEditando.alternativas_aprobadas) ? claveEditando.alternativas_aprobadas : []).map((alt, i) => (
                       <span key={i} style={{ backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 10px', borderRadius: '15px', fontSize: '0.8rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         {alt}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const filtradas = claveEditando.alternativas_aprobadas.filter((_, idx) => idx !== i);
-                            setClaveEditando({ ...claveEditando, alternativas_aprobadas: filtradas });
-                          }}
-                          style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontWeight: 'bold' }}
-                        >
-                          ✖
-                        </button>
+                        <button type="button" onClick={() => setClaveEditando({ ...claveEditando, alternativas_aprobadas: claveEditando.alternativas_aprobadas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontWeight: 'bold' }}>✖</button>
                       </span>
                     ))}
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  style={{ padding: '10px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}
-                >
+                <button type="submit" style={{ padding: '10px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
                   💾 Guardar Configuración de Clave {claveEditando.clave}
                 </button>
               </form>
@@ -613,36 +687,50 @@ export default function PantallaProgramadorCorrugadora() {
       )}
 
       {/* GRILLA PRINCIPAL DE TRABAJO (2 COLUMNAS: PEDIDOS POR CLAVE | MOTOR IA & MESA MANUAL) */}
-      {modoVista !== 'MATRIZ_CLAVES' && (
+      {(modoVista === 'IA' || modoVista === 'MANUAL') && (
         <div style={{ display: 'grid', gridTemplateColumns: '430px 1fr', gap: '1.4rem', alignItems: 'start' }}>
           
-          {/* COLUMNA IZQUIERDA: PEDIDOS PENDIENTES AGRUPADOS POR CLAVE */}
+          {/* COLUMNA IZQUIERDA: PEDIDOS PENDIENTES AGRUPADOS POR CLAVE (SOLO "T") */}
           <div style={{ backgroundColor: '#fff', padding: '1.2rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderTop: '5px solid #7c3aed' }}>
-            <h4 style={{ marginTop: 0, marginBottom: '8px', color: '#4c1d95' }}>1. Pedidos Pendientes por Clave</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h4 style={{ margin: 0, color: '#4c1d95' }}>1. Claves Corrugadora (T*)</h4>
+              <label style={{ fontSize: '0.75rem', color: '#475569', cursor: 'pointer', fontWeight: 'bold' }}>
+                <input type="checkbox" checked={ocultarClavesVacias} onChange={(e) => setOcultarClavesVacias(e.target.checked)} /> Solo con pendientes
+              </label>
+            </div>
+
+            {clavesCompatiblesExtra.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', padding: '5px 8px', borderRadius: '6px', marginBottom: '8px', fontSize: '0.76rem' }}>
+                <strong style={{ color: '#92400e' }}>
+                  🔗 Mezclando {1 + clavesCompatiblesExtra.length} claves ({[claveSeleccionada, ...clavesCompatiblesExtra].join(' + ')})
+                </strong>
+                <button type="button" onClick={() => { setClavesCompatiblesExtra([]); setOrdenesSeleccionadasIA([]); setPropuestasIA([]); }} style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.75rem' }}>
+                  ✖ Solo 1
+                </button>
+              </div>
+            )}
             
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              {claves.map(c => {
+              {clavesVisibles.map(c => {
                 const count = pedidos.filter(p => p.clave_material === c.clave).length;
+                const esPrincipal = claveSeleccionada === c.clave;
+                const esExtra = clavesCompatiblesExtra.includes(c.clave);
+                const activa = esPrincipal || esExtra;
                 return (
                   <button
                     key={c.clave}
                     type="button"
-                    onClick={() => {
-                      setClaveSeleccionada(c.clave);
-                      setOrdenesSeleccionadasIA([]);
-                    }}
+                    onClick={() => toggleClaveSeleccionada(c.clave)}
                     style={{
-                      padding: '5px 10px',
-                      borderRadius: '6px',
-                      border: claveSeleccionada === c.clave ? '2px solid #7c3aed' : '1px solid #cbd5e1',
-                      backgroundColor: claveSeleccionada === c.clave ? '#ede9fe' : '#f8fafc',
-                      color: claveSeleccionada === c.clave ? '#5b21b6' : '#334155',
-                      fontWeight: 'bold',
-                      fontSize: '0.8rem',
-                      cursor: 'pointer'
+                      padding: '5px 10px', borderRadius: '6px',
+                      border: esPrincipal ? '2px solid #7c3aed' : esExtra ? '2px solid #d97706' : '1px solid #cbd5e1',
+                      backgroundColor: esPrincipal ? '#ede9fe' : esExtra ? '#fef3c7' : '#f8fafc',
+                      color: esPrincipal ? '#5b21b6' : esExtra ? '#92400e' : '#334155',
+                      fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer'
                     }}
+                    title="Clic para sumar o quitar esta clave en la cola de programación"
                   >
-                    {c.clave} ({count})
+                    {activa ? '✓ ' : ''}{c.clave} ({count})
                   </button>
                 );
               })}
@@ -654,7 +742,6 @@ export default function PantallaProgramadorCorrugadora() {
               </div>
             )}
 
-            {/* Barra de selección puntual (Canasta del día) */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '6px 8px', backgroundColor: ordenesSeleccionadasIA.length > 0 ? '#ede9fe' : '#f8fafc', borderRadius: '6px', border: '1px solid #ddd6fe', fontSize: '0.78rem' }}>
               <strong style={{ color: '#4c1d95' }}>
                 {ordenesSeleccionadasIA.length > 0
@@ -662,11 +749,7 @@ export default function PantallaProgramadorCorrugadora() {
                   : `Evaluando todas (${pedidosFiltradosClave.length})`}
               </strong>
               {ordenesSeleccionadasIA.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setOrdenesSeleccionadasIA([])}
-                  style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.76rem' }}
-                >
+                <button type="button" onClick={() => setOrdenesSeleccionadasIA([])} style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.76rem' }}>
                   ✖ Limpiar selección
                 </button>
               )}
@@ -681,23 +764,10 @@ export default function PantallaProgramadorCorrugadora() {
                 pedidosFiltradosClave.map(ord => {
                   const estaElegida = ordenesSeleccionadasIA.includes(Number(ord.numero_orden));
                   return (
-                    <div
-                      key={ord.numero_orden}
-                      style={{
-                        padding: '10px',
-                        borderRadius: '6px',
-                        border: estaElegida ? '2px solid #7c3aed' : '1px solid #e2e8f0',
-                        backgroundColor: estaElegida ? '#f5f3ff' : '#fff',
-                        fontSize: '0.82rem'
-                      }}
-                    >
+                    <div key={ord.numero_orden} style={{ padding: '10px', borderRadius: '6px', border: estaElegida ? '2px solid #7c3aed' : '1px solid #e2e8f0', backgroundColor: estaElegida ? '#f5f3ff' : '#fff', fontSize: '0.82rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={estaElegida}
-                            onChange={() => toggleSeleccionOrdenIA(ord.numero_orden)}
-                          />
+                          <input type="checkbox" checked={estaElegida} onChange={() => toggleSeleccionOrdenIA(ord.numero_orden)} />
                           <strong style={{ color: '#1e40af', fontSize: '0.92rem' }}>#{ord.numero_orden} · {ord.clave_material}</strong>
                         </label>
                         <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: '4px', fontWeight: 'bold', fontSize: '0.75rem' }}>
@@ -709,23 +779,10 @@ export default function PantallaProgramadorCorrugadora() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
                         <span>Planchas: <strong>{ord.planchas_necesarias}</strong> ({ord.cantidad_pendiente} caj.)</span>
                         <div style={{ display: 'flex', gap: '4px' }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setForzarOrdenId(String(ord.numero_orden));
-                              ejecutarCerebroIA();
-                            }}
-                            style={{ padding: '3px 7px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
-                            title="Pedir a la IA combinaciones que incluyan esta orden"
-                          >
+                          <button type="button" onClick={() => { setForzarOrdenId(String(ord.numero_orden)); ejecutarCerebroIA(); }} style={{ padding: '3px 7px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}>
                             🧠 Combinar
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => agregarOrdenAMesaManual(ord)}
-                            style={{ padding: '3px 7px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
-                            title="Enviar a la Mesa Manual para armar tirada a dedo"
-                          >
+                          <button type="button" onClick={() => agregarOrdenAMesaManual(ord)} style={{ padding: '3px 7px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}>
                             + Mesa
                           </button>
                         </div>
@@ -740,63 +797,32 @@ export default function PantallaProgramadorCorrugadora() {
           {/* COLUMNA DERECHA: CEREBRO IA / MESA MANUAL + SUSTITUCIÓN DE PAPEL */}
           <div style={{ backgroundColor: '#fff', padding: '1.4rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderTop: `5px solid ${modoVista === 'IA' ? '#7c3aed' : '#0284c7'}` }}>
             
-            {/* PANEL DE OVERRIDE DE PAPEL (RESERVA DE STOCK) SIEMPRE ACCESIBLE */}
+            {/* PANEL DE OVERRIDE DE PAPEL */}
             <div style={{ backgroundColor: usarPapelAlternativo ? '#fffbeb' : '#f8fafc', border: usarPapelAlternativo ? '2px solid #f59e0b' : '1px solid #cbd5e1', borderRadius: '8px', padding: '12px', marginBottom: '1.2rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                 <label style={{ fontWeight: 'bold', color: '#0f172a', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={usarPapelAlternativo}
-                    onChange={(e) => setUsarPapelAlternativo(e.target.checked)}
-                  />
+                  <input type="checkbox" checked={usarPapelAlternativo} onChange={(e) => setUsarPapelAlternativo(e.target.checked)} />
                   🔄 Usar Papel / Gramaje Alternativo Manual (reservar el papel ideal para otro producto)
                 </label>
 
                 <label style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#065f46', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={habilitarConversionAlAprobar}
-                    onChange={(e) => setHabilitarConversionAlAprobar(e.target.checked)}
-                  />{' '}
-                  Habilitar órdenes en Conversión al aprobar
+                  <input type="checkbox" checked={habilitarConversionAlAprobar} onChange={(e) => setHabilitarConversionAlAprobar(e.target.checked)} /> Habilitar órdenes en Conversión al aprobar
                 </label>
               </div>
 
               {usarPapelAlternativo && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #f59e0b' }}>
                   <div>
-                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
-                      Papel / Gramaje Alternativo a Consumir:
-                    </label>
-                    <input
-                      type="text"
-                      list="lista-alternativas-clave"
-                      placeholder="Elegí o escribí papel (ej. Kraft 165g + Onda 125g)..."
-                      value={papelAlternativoElegido}
-                      onChange={(e) => setPapelAlternativoElegido(e.target.value)}
-                      style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #f59e0b', boxSizing: 'border-box', fontWeight: 'bold' }}
-                    />
+                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Papel / Gramaje Alternativo a Consumir:</label>
+                    <input type="text" list="lista-alternativas-clave" placeholder="Elegí o escribí papel..." value={papelAlternativoElegido} onChange={(e) => setPapelAlternativoElegido(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #f59e0b', boxSizing: 'border-box', fontWeight: 'bold' }} />
                     <datalist id="lista-alternativas-clave">
-                      {(infoClaveActual?.alternativas_aprobadas || []).map((alt, idx) => (
-                        <option key={idx} value={alt} />
-                      ))}
-                      {papelesStock.map((pap) => (
-                        <option key={pap.codigo} value={`${pap.codigo} — ${pap.nombre} (${Math.round(pap.stock_kg)} kg disp.)`} />
-                      ))}
+                      {(infoClaveActual?.alternativas_aprobadas || []).map((alt, idx) => <option key={idx} value={alt} />)}
+                      {papelesStock.map((pap) => <option key={pap.codigo} value={`${pap.codigo} — ${pap.nombre} (${Math.round(pap.stock_kg)} kg disp.)`} />)}
                     </datalist>
                   </div>
-
                   <div>
-                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
-                      Motivo / Reserva de Stock (Auditoría):
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Ej: Reservamos Kraft 150g para pedido exportación..."
-                      value={motivoAlternativa}
-                      onChange={(e) => setMotivoAlternativa(e.target.value)}
-                      style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
-                    />
+                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Motivo / Reserva de Stock (Auditoría):</label>
+                    <input type="text" placeholder="Ej: Reservamos Kraft 150g para exportación..." value={motivoAlternativa} onChange={(e) => setMotivoAlternativa(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
                   </div>
                 </div>
               )}
@@ -808,55 +834,20 @@ export default function PantallaProgramadorCorrugadora() {
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap', marginBottom: '1.2rem', backgroundColor: '#f5f3ff', padding: '12px', borderRadius: '8px' }}>
                   <div>
                     <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Trim Máx (%):</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      max="15"
-                      value={trimMaxPct}
-                      onChange={(e) => setTrimMaxPct(e.target.value)}
-                      style={{ width: '85px', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}
-                    />
+                    <input type="number" step="0.5" min="0.5" max="15" value={trimMaxPct} onChange={(e) => setTrimMaxPct(e.target.value)} style={{ width: '85px', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontWeight: 'bold' }} />
                   </div>
-
                   <div>
                     <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Forzar Bobina (Opcional):</label>
-                    <select
-                      value={forzarAnchoBobina}
-                      onChange={(e) => setForzarAnchoBobina(e.target.value)}
-                      style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}
-                    >
+                    <select value={forzarAnchoBobina} onChange={(e) => setForzarAnchoBobina(e.target.value)} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}>
                       <option value="">-- Todas las activas --</option>
                       {anchosActivos.map(a => <option key={a} value={a}>{a} mm</option>)}
                     </select>
                   </div>
-
                   <div>
                     <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Incluir Orden # (Opcional):</label>
-                    <input
-                      type="number"
-                      placeholder="Ej: 48341"
-                      value={forzarOrdenId}
-                      onChange={(e) => setForzarOrdenId(e.target.value)}
-                      style={{ width: '110px', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1' }}
-                    />
+                    <input type="number" placeholder="Ej: 48341" value={forzarOrdenId} onChange={(e) => setForzarOrdenId(e.target.value)} style={{ width: '110px', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1' }} />
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={ejecutarCerebroIA}
-                    disabled={calculandoIA}
-                    style={{
-                      padding: '9px 18px',
-                      backgroundColor: '#7c3aed',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      fontSize: '0.92rem'
-                    }}
-                  >
+                  <button type="button" onClick={ejecutarCerebroIA} disabled={calculandoIA} style={{ padding: '9px 18px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.92rem' }}>
                     {calculandoIA ? '⏳ Calculando Trim...' : '⚡ Calcular Combinaciones Óptimas'}
                   </button>
                 </div>
@@ -864,10 +855,8 @@ export default function PantallaProgramadorCorrugadora() {
                 {propuestasIA.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#64748b' }}>
                     <div style={{ fontSize: '3rem', marginBottom: '8px' }}>🤖</div>
-                    <h4 style={{ margin: '0 0 6px 0', color: '#334155' }}>Listo para optimizar la clave {claveSeleccionada}</h4>
-                    <p style={{ margin: 0, fontSize: '0.88rem' }}>
-                      Presioná <strong>"Calcular Combinaciones Óptimas"</strong> para que el motor cruce anchos de bobina, salidas en slitter y metros de corrida.
-                    </p>
+                    <h4 style={{ margin: '0 0 6px 0', color: '#334155' }}>Listo para optimizar {[claveSeleccionada, ...clavesCompatiblesExtra].filter(Boolean).join(' + ')}</h4>
+                    <p style={{ margin: 0, fontSize: '0.88rem' }}>Presioná <strong>"Calcular Combinaciones Óptimas"</strong> para cruzar bobinas, slitter (máx. 5) y guillotina (máx. 2).</p>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -875,69 +864,26 @@ export default function PantallaProgramadorCorrugadora() {
                       <div key={idx} style={{ border: '2px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px', backgroundColor: idx === 0 ? '#f0fdf4' : '#fff' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <span style={{ backgroundColor: '#4c1d95', color: '#fff', padding: '3px 9px', borderRadius: '12px', fontSize: '0.78rem', fontWeight: 'bold' }}>
-                              Score IA: {prop.score_ia}/100
-                            </span>
-                            <strong style={{ fontSize: '1.05rem', color: '#0f172a' }}>
-                              Bobina {prop.ancho_bobina_mm} mm
-                            </strong>
-                            <span style={{ color: colorTrim(prop.trim_porcentaje), fontWeight: 'bold', fontSize: '0.9rem' }}>
-                              · Trim: {prop.trim_mm} mm ({prop.trim_porcentaje}%)
-                            </span>
-                            <span style={{ color: '#0284c7', fontWeight: 'bold', fontSize: '0.9rem' }}>
-                              · Corrida: {prop.metros_lineales} mts
-                            </span>
-                            {prop.consumo_estimado_kg > 0 && (
-                              <span style={{ color: '#475569', fontWeight: 'bold', fontSize: '0.85rem' }}>
-                                · ~{prop.consumo_estimado_kg} kg
-                              </span>
-                            )}
+                            <span style={{ backgroundColor: '#4c1d95', color: '#fff', padding: '3px 9px', borderRadius: '12px', fontSize: '0.78rem', fontWeight: 'bold' }}>Score IA: {prop.score_ia}/100</span>
+                            <strong style={{ fontSize: '1.05rem', color: '#0f172a' }}>Bobina {prop.ancho_bobina_mm} mm</strong>
+                            <span style={{ color: colorTrim(prop.trim_porcentaje), fontWeight: 'bold', fontSize: '0.9rem' }}>· Trim: {prop.trim_mm} mm ({prop.trim_porcentaje}%)</span>
+                            <span style={{ color: '#0284c7', fontWeight: 'bold', fontSize: '0.9rem' }}>· Corrida: {prop.metros_lineales} mts</span>
+                            {prop.consumo_estimado_kg > 0 && <span style={{ color: '#475569', fontWeight: 'bold', fontSize: '0.85rem' }}>· ~{prop.consumo_estimado_kg} kg</span>}
                           </div>
 
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <button
-                              type="button"
-                              onClick={() => llevarPropuestaAMesaManual(prop)}
-                              style={{ padding: '6px 10px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #0284c7', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer' }}
-                            >
-                              ✏️ Retocar en Mesa
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => aprobarTirada(prop)}
-                              style={{ padding: '6px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.82rem', cursor: 'pointer' }}
-                            >
-                              🚀 Aprobar Tirada
-                            </button>
+                            <button type="button" onClick={() => llevarPropuestaAMesaManual(prop)} style={{ padding: '6px 10px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #0284c7', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer' }}>✏️ Retocar en Mesa</button>
+                            <button type="button" onClick={() => aprobarTirada(prop)} style={{ padding: '6px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.82rem', cursor: 'pointer' }}>🚀 Aprobar Tirada</button>
                           </div>
                         </div>
 
-                        {/* Barra visual de ocupación del ancho de bobina */}
                         <div style={{ width: '100%', height: '22px', backgroundColor: '#fee2e2', borderRadius: '6px', overflow: 'hidden', display: 'flex', marginBottom: '8px', border: '1px solid #cbd5e1' }}>
-                          {prop.pistas.map((p, iP) => {
-                            const pctAncho = (p.ancho_ocupado_mm / prop.ancho_bobina_mm) * 100;
-                            return (
-                              <div
-                                key={iP}
-                                style={{
-                                  width: `${pctAncho}%`,
-                                  backgroundColor: iP === 0 ? '#2563eb' : '#0d9488',
-                                  color: '#fff',
-                                  fontSize: '0.74rem',
-                                  fontWeight: 'bold',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  borderRight: '2px solid #fff'
-                                }}
-                              >
-                                #{p.numero_orden} ({p.salidas}×{p.ancho_mm}mm)
-                              </div>
-                            );
-                          })}
-                          <div style={{ flex: 1, fontSize: '0.7rem', color: '#991b1b', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {prop.trim_mm}mm
-                          </div>
+                          {prop.pistas.map((p, iP) => (
+                            <div key={iP} style={{ width: `${(p.ancho_ocupado_mm / prop.ancho_bobina_mm) * 100}%`, backgroundColor: iP === 0 ? '#2563eb' : '#0d9488', color: '#fff', fontSize: '0.74rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '2px solid #fff' }}>
+                              #{p.numero_orden} ({p.salidas}×{p.ancho_mm}mm)
+                            </div>
+                          ))}
+                          <div style={{ flex: 1, fontSize: '0.7rem', color: '#991b1b', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{prop.trim_mm}mm</div>
                         </div>
 
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px', fontSize: '0.8rem' }}>
@@ -957,30 +903,28 @@ export default function PantallaProgramadorCorrugadora() {
             {/* MODO 2: MESA MANUAL / OVERRIDE DEL PROGRAMADOR */}
             {modoVista === 'MANUAL' && (
               <div>
-                <h4 style={{ marginTop: 0, color: '#0369a1' }}>🛠️ Mesa Manual de Combinación de Bobina y Pistas</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, color: '#0369a1' }}>
+                    {editandoProgramaId ? `✏️ Editando Combinación de Tirada #${editandoProgramaId}` : '🛠️ Mesa Manual de Combinación de Bobina y Pistas'}
+                  </h4>
+                  {editandoProgramaId && (
+                    <button type="button" onClick={() => setEditandoProgramaId(null)} style={{ background: 'none', border: 'none', color: '#dc2626', fontWeight: 'bold', cursor: 'pointer' }}>
+                      ✖ Cancelar edición
+                    </button>
+                  )}
+                </div>
+
                 <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem', backgroundColor: '#f0f9ff', padding: '12px', borderRadius: '8px' }}>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block' }}>Bobina Madre (mm):</label>
-                    <select
-                      value={bobinaManual}
-                      onChange={e => setBobinaManual(Number(e.target.value))}
-                      style={{ padding: '8px', borderRadius: '5px', border: '2px solid #0284c7', fontWeight: 'bold', fontSize: '1rem' }}
-                    >
+                    <select value={bobinaManual} onChange={e => setBobinaManual(Number(e.target.value))} style={{ padding: '8px', borderRadius: '5px', border: '2px solid #0284c7', fontWeight: 'bold', fontSize: '1rem' }}>
                       {anchos.map(a => <option key={a.id} value={a.ancho_mm}>{a.ancho_mm} mm</option>)}
                     </select>
                   </div>
-
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block' }}>Metros Lineales a Correr:</label>
-                    <input
-                      type="number"
-                      min="10"
-                      value={metrosManuales}
-                      onChange={e => setMetrosManuales(Number(e.target.value))}
-                      style={{ width: '120px', padding: '8px', borderRadius: '5px', border: '1px solid #0284c7', fontWeight: 'bold', fontSize: '1rem' }}
-                    />
+                    <input type="number" min="10" value={metrosManuales} onChange={e => setMetrosManuales(Number(e.target.value))} style={{ width: '120px', padding: '8px', borderRadius: '5px', border: '1px solid #0284c7', fontWeight: 'bold', fontSize: '1rem' }} />
                   </div>
-
                   <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
                     <span style={{ fontSize: '0.82rem', color: '#475569', display: 'block' }}>Ancho Ocupado: <strong>{anchoOcupadoManual} / {bobinaManual} mm</strong></span>
                     <span style={{ fontSize: '1.15rem', fontWeight: 'bold', color: colorTrim(trimManualPct) }}>
@@ -1001,11 +945,8 @@ export default function PantallaProgramadorCorrugadora() {
                         <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', backgroundColor: '#f8fafc' }}>
                           <div>
                             <strong>#{pm.orden.numero_orden}</strong> · {pm.orden.cliente} ({pm.orden.ancho_mm}×{pm.orden.largo_mm} mm · Clave {pm.orden.clave_material})
-                            <div style={{ fontSize: '0.78rem', color: '#0369a1', fontWeight: 'bold' }}>
-                              Produce {planchasTirada} planchas en {metrosManuales} mts
-                            </div>
+                            <div style={{ fontSize: '0.78rem', color: '#0369a1', fontWeight: 'bold' }}>Produce {planchasTirada} planchas en {metrosManuales} mts</div>
                           </div>
-
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <button type="button" onClick={() => cambiarSalidasManual(idx, -1)} style={{ padding: '4px 9px', fontWeight: 'bold' }}>-</button>
                             <strong>{pm.salidas} salida(s) = {pm.orden.ancho_mm * pm.salidas} mm</strong>
@@ -1040,7 +981,7 @@ export default function PantallaProgramadorCorrugadora() {
                     })}
                     style={{ width: '100%', padding: '12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '1rem', cursor: 'pointer' }}
                   >
-                    🚀 Aprobar Tirada Manual y Enviar a Corrugadora
+                    {editandoProgramaId ? '💾 Guardar Cambio de Combinación' : '🚀 Aprobar Tirada Manual y Enviar a Corrugadora'}
                   </button>
                 )}
               </div>
