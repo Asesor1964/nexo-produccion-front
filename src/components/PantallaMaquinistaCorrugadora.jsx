@@ -64,40 +64,30 @@ export default function PantallaMaquinistaCorrugadora() {
       );
     }
 
-    const estaciones = [
-      {
-        titulo: '1. LINER EXT',
-        papel: prog.es_blanco ? `BLANCO (${receta.liner_ext_ideal || 'Liner'})` : (receta.liner_ext_ideal || 'Estándar'),
-        gr: receta.liner_ext_gramaje,
-        res: receta.liner_ext_rct ? `RCT ${receta.liner_ext_rct}` : '',
-        esBlanco: prog.es_blanco
-      },
-      {
-        titulo: '2. ONDA 1',
-        papel: receta.medium_ideal || 'Onda',
-        gr: receta.onda1_gramaje,
-        res: receta.onda1_cct ? `CCT ${receta.onda1_cct}` : ''
-      },
-      ...(receta.es_doble_onda ? [
-        {
-          titulo: '3. ENTRETAPA',
-          papel: receta.entretapa_ideal || 'Entretapa',
-          gr: receta.entretapa_gramaje,
-          res: receta.entretapa_rct ? `RCT ${receta.entretapa_rct}` : ''
-        },
-        {
-          titulo: '4. ONDA 2',
-          papel: receta.onda2_ideal || 'Onda',
-          gr: receta.onda2_gramaje,
-          res: receta.onda2_cct ? `CCT ${receta.onda2_cct}` : ''
-        }
-      ] : []),
-      {
-        titulo: receta.es_doble_onda ? '5. LINER INT' : '3. LINER INT',
-        papel: receta.liner_int_ideal || 'Liner Int',
-        gr: receta.liner_int_gramaje,
-        res: receta.liner_int_rct ? `RCT ${receta.liner_int_rct}` : ''
+    const asignados = prog.portabobinas_asignados || {};
+    const armarEstacion = (key, titulo, papelIdeal, grIdeal, resMin, esBlanco = false) => {
+      const alt = asignados[key];
+      if (alt) {
+        return {
+          titulo,
+          papel: `${alt.codigo} — ${alt.nombre}`,
+          gr: alt.gramaje || grIdeal,
+          res: '🔄 ASIGNADO POR PCP',
+          esBlanco,
+          esAsignado: true
+        };
       }
+      return { titulo, papel: papelIdeal, gr: grIdeal, res: resMin, esBlanco, esAsignado: false };
+    };
+
+    const estaciones = [
+      armarEstacion('liner_ext', '1. LINER EXT', prog.es_blanco ? `BLANCO (${receta?.liner_ext_ideal || 'Liner'})` : (receta?.liner_ext_ideal || 'Estándar'), receta?.liner_ext_gramaje, receta?.liner_ext_rct ? `RCT ${receta.liner_ext_rct}` : '', prog.es_blanco),
+      armarEstacion('onda_1', '2. ONDA 1', receta?.medium_ideal || 'Onda', receta?.onda1_gramaje, receta?.onda1_cct ? `CCT ${receta.onda1_cct}` : ''),
+      ...(receta?.es_doble_onda || asignados.entretapa || asignados.onda_2 ? [
+        armarEstacion('entretapa', '3. ENTRETAPA', receta?.entretapa_ideal || 'Entretapa', receta?.entretapa_gramaje, receta?.entretapa_rct ? `RCT ${receta.entretapa_rct}` : ''),
+        armarEstacion('onda_2', '4. ONDA 2', receta?.onda2_ideal || 'Onda', receta?.onda2_gramaje, receta?.onda2_cct ? `CCT ${receta.onda2_cct}` : '')
+      ] : []),
+      armarEstacion('liner_int', (receta?.es_doble_onda || asignados.entretapa) ? '5. LINER INT' : '3. LINER INT', receta?.liner_int_ideal || 'Liner Int', receta?.liner_int_gramaje, receta?.liner_int_rct ? `RCT ${receta.liner_int_rct}` : '')
     ];
 
     return (

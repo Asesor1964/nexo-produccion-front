@@ -33,6 +33,9 @@ export default function PantallaProgramadorCorrugadora() {
 
   // Selector de Papel Ideal vs Papel Alternativo Manual (Reserva de Stock)
   const [usarPapelAlternativo, setUsarPapelAlternativo] = useState(false);
+  const [portabobinasManual, setPortabobinasManual] = useState({
+    liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: ''
+  });
   const [papelAlternativoElegido, setPapelAlternativoElegido] = useState('');
   const [motivoAlternativa, setMotivoAlternativa] = useState('');
   const [habilitarConversionAlAprobar, setHabilitarConversionAlAprobar] = useState(true);
@@ -85,6 +88,26 @@ export default function PantallaProgramadorCorrugadora() {
 
   const anchosActivos = anchos.filter(a => a.activo).map(a => a.ancho_mm);
   const infoClaveActual = claves.find(c => c.clave === claveSeleccionada) || null;
+  const esDobleOndaActual = Boolean(
+    infoClaveActual?.es_doble_onda ||
+    String(claveSeleccionada || '').toUpperCase().includes('Z')
+  );
+
+  const esBlancoActual = String(claveSeleccionada || '').toUpperCase().includes('BLANCO');
+
+  const obtenerPapelesOrdenados = (puesto) => {
+    const esOnda = puesto === 'onda_1' || puesto === 'onda_2';
+    return [...papelesStock].sort((a, b) => {
+      const tipoA = String(a.tipo_papel || '').toUpperCase();
+      const tipoB = String(b.tipo_papel || '').toUpperCase();
+      const score = (tipo) => {
+        if (esOnda) return tipo.includes('ONDA') ? 0 : 1;
+        if (puesto === 'liner_ext' && esBlancoActual) return tipo.includes('BLANCO') ? 0 : 1;
+        return (tipo.includes('KRAFT') || tipo.includes('LINER')) ? 0 : 1;
+      };
+      return score(tipoA) - score(tipoB) || (Number(a.gramaje) - Number(b.gramaje));
+    });
+  };
 
   const clavesVisibles = claves.filter(c => {
     if (!esClaveCorrugadoraConversion(c.clave)) return false;
@@ -362,14 +385,31 @@ export default function PantallaProgramadorCorrugadora() {
   const trimManualPct = Number(bobinaManual) > 0 ? Number(((trimManualMm / Number(bobinaManual)) * 100).toFixed(2)) : 0;
 
   const aprobarTirada = async (datosTirada) => {
-    if (usarPapelAlternativo && !papelAlternativoElegido.trim()) {
-      alert('⚠️ Indicá qué papel/gramaje alternativo vas a utilizar o destildá la opción de papel alternativo.');
-      return;
-    }
+    let portabobinasPayload = null;
+    let papelFinal = `IDEAL (${datosTirada.clave_material}): ${infoClaveActual?.liner_ext_ideal || 'Estándar'}`;
 
-    const papelFinal = usarPapelAlternativo
-      ? `ALTERNATIVO: ${papelAlternativoElegido.trim()}`
-      : `IDEAL (${datosTirada.clave_material}): ${infoClaveActual?.liner_ext_ideal || 'Estándar'}`;
+    if (usarPapelAlternativo) {
+      const buscarPapel = (cod) => papelesStock.find(p => p.codigo === cod) || null;
+      const seleccionados = {};
+      ['liner_ext', 'onda_1', 'entretapa', 'onda_2', 'liner_int'].forEach((k) => {
+        if (portabobinasManual[k]) {
+          const obj = buscarPapel(portabobinasManual[k]);
+          seleccionados[k] = obj
+            ? { codigo: obj.codigo, nombre: obj.nombre, gramaje: obj.gramaje, tipo_papel: obj.tipo_papel }
+            : { codigo: portabobinasManual[k], nombre: portabobinasManual[k], gramaje: 0 };
+        }
+      });
+
+      if (Object.keys(seleccionados).length === 0) {
+        alert('⚠️ Elegí al menos un papel real en los desplegables de Portabobinas o destildá "Usar Papel Alternativo".');
+        return;
+      }
+
+      portabobinasPayload = seleccionados;
+      papelFinal = Object.entries(seleccionados)
+        .map(([k, v]) => `${k.toUpperCase()}: ${v.codigo} (${v.gramaje}g)`)
+        .join(' | ');
+    }
 
     const esEdicion = Boolean(editandoProgramaId && modoVista === 'MANUAL');
     const confirmar = window.confirm(
@@ -393,7 +433,8 @@ export default function PantallaProgramadorCorrugadora() {
           papel_utilizado: papelFinal,
           es_alternativa_manual: usarPapelAlternativo,
           motivo_alternativa: motivoAlternativa,
-          habilitar_en_conversion: habilitarConversionAlAprobar
+          habilitar_en_conversion: habilitarConversionAlAprobar,
+          portabobinas_asignados: portabobinasPayload
         })
       });
       const data = await res.json();
@@ -403,6 +444,7 @@ export default function PantallaProgramadorCorrugadora() {
         setUsarPapelAlternativo(false);
         setMotivoAlternativa('');
         cargarContexto();
+        setPortabobinasManual({ liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: '' });
       } else {
         alert(`❌ Error: ${data.error}`);
       }
@@ -811,18 +853,48 @@ export default function PantallaProgramadorCorrugadora() {
               </div>
 
               {usarPapelAlternativo && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #f59e0b' }}>
-                  <div>
-                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Papel / Gramaje Alternativo a Consumir:</label>
-                    <input type="text" list="lista-alternativas-clave" placeholder="Elegí o escribí papel..." value={papelAlternativoElegido} onChange={(e) => setPapelAlternativoElegido(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #f59e0b', boxSizing: 'border-box', fontWeight: 'bold' }} />
-                    <datalist id="lista-alternativas-clave">
-                      {(infoClaveActual?.alternativas_aprobadas || []).map((alt, idx) => <option key={idx} value={alt} />)}
-                      {papelesStock.map((pap) => <option key={pap.codigo} value={`${pap.codigo} — ${pap.nombre} (${Math.round(pap.stock_kg)} kg disp.)`} />)}
-                    </datalist>
+                <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #f59e0b' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${esDobleOndaActual ? 5 : 3}, 1fr)`, gap: '8px', marginBottom: '10px' }}>
+                    {[
+                      { key: 'liner_ext', label: '1. Liner Ext' },
+                      { key: 'onda_1', label: '2. Onda 1' },
+                      ...(esDobleOndaActual ? [
+                        { key: 'entretapa', label: '3. Entretapa' },
+                        { key: 'onda_2', label: '4. Onda 2' }
+                      ] : []),
+                      { key: 'liner_int', label: esDobleOndaActual ? '5. Liner Int' : '3. Liner Int' }
+                    ].map((est) => (
+                      <div key={est.key}>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', display: 'block', marginBottom: '3px', color: '#92400e' }}>
+                          {est.label}:
+                        </label>
+                        <select
+                          value={portabobinasManual[est.key] || ''}
+                          onChange={(e) => setPortabobinasManual({ ...portabobinasManual, [est.key]: e.target.value })}
+                          style={{ width: '100%', padding: '7px 5px', borderRadius: '5px', border: '1px solid #f59e0b', fontSize: '0.78rem', fontWeight: 'bold', backgroundColor: '#fff' }}
+                        >
+                          <option value="">-- Ideal de clave --</option>
+                          {obtenerPapelesOrdenados(est.key).map((pap) => (
+                            <option key={pap.codigo} value={pap.codigo}>
+                              {pap.codigo} · {pap.nombre} ({Math.round(pap.stock_kg)} kg)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
                   </div>
+
                   <div>
-                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Motivo / Reserva de Stock (Auditoría):</label>
-                    <input type="text" placeholder="Ej: Reservamos Kraft 150g para exportación..." value={motivoAlternativa} onChange={(e) => setMotivoAlternativa(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '5px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+                    <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
+                      Motivo / Reserva de Stock (Auditoría):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Falta Testliner 145g, usamos Kraft Misionero 125g..."
+                      value={motivoAlternativa}
+                      onChange={(e) => setMotivoAlternativa(e.target.value)}
+                      style={{ width: '100%', padding: '7px', borderRadius: '5px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                    />
                   </div>
                 </div>
               )}
