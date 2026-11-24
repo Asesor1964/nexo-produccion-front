@@ -7,6 +7,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const [pedidos, setPedidos] = useState([]);
   const [programas, setProgramas] = useState([]);
   const [papelesStock, setPapelesStock] = useState([]);
+  const [recetasFormulas, setRecetasFormulas] = useState([]);    
   const [origenPedidos, setOrigenPedidos] = useState('');
   const [importandoCSV, setImportandoCSV] = useState(false);
   const [cargando, setCargando] = useState(true);
@@ -64,6 +65,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         setPedidos(listaPedidos);
         setProgramas(data.programas || []);
         setPapelesStock(data.papeles_stock || []);
+        setRecetasFormulas(data.recetas_formulas || []);
         setOrigenPedidos(data.origen_pedidos || '');
 
         if (!claveSeleccionada && listaClaves.length > 0) {
@@ -78,7 +80,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     } catch (error) {
       console.error('Error cargando contexto de corrugadora:', error);
     } finally {
-      setCargando(false);
+      setCargando(false);      
     }
   };
 
@@ -107,6 +109,62 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
       };
       return score(tipoA) - score(tipoB) || (Number(a.gramaje) - Number(b.gramaje));
     });
+  };
+
+  // Fórmulas Originales y Alternativas para la clave actual (exacta o base, ej: "TMZ390 RH" -> "TMZ390")
+  const formulasClaveActual = recetasFormulas.filter(f => {
+    const sel = String(claveSeleccionada || '').trim().toUpperCase();
+    const base = sel.split(/\s+/)[0];
+    return f.clave === sel || f.clave === base;
+  });
+
+  // Busca la mejor bobina en stock que coincida con un código de RECETAS.csv (ej: "B 150", "OE 180", "TL 140")
+  const buscarBobinaEnStockPorToken = (token) => {
+    if (!token) return '';
+    const t = String(token).trim().toUpperCase();
+    const matchGr = t.match(/(\d{2,3})/);
+    const gr = matchGr ? Number(matchGr[1]) : 0;
+
+    let palabraTipo = '';
+    if (t.startsWith('B')) palabraTipo = 'BLANCO';
+    else if (t.startsWith('K')) palabraTipo = 'KRAFT';
+    else if (t.startsWith('TL')) palabraTipo = 'TEST';
+    else if (t.startsWith('OE')) palabraTipo = 'ENCOLAD';
+    else if (t.startsWith('SQ')) palabraTipo = 'SEMI';
+    else if (t.startsWith('O')) palabraTipo = 'ONDA';
+
+    // 1. Coincidencia exacta de tipo + gramaje
+    const exacto = papelesStock.find(p =>
+      String(p.tipo_papel || '').toUpperCase().includes(palabraTipo) &&
+      (gr === 0 || Number(p.gramaje) === gr)
+    );
+    if (exacto) return exacto.codigo;
+
+    // 2. Solo por tipo con gramaje más cercano
+    const mismoTipo = papelesStock
+      .filter(p => palabraTipo && String(p.tipo_papel || '').toUpperCase().includes(palabraTipo))
+      .sort((a, b) => Math.abs(Number(a.gramaje) - gr) - Math.abs(Number(b.gramaje) - gr));
+    return mismoTipo[0]?.codigo || '';
+  };
+
+  const aplicarFormulaReceta = (formulaId) => {
+    const f = formulasClaveActual.find(x => String(x.id) === String(formulaId));
+    if (!f) return;
+
+    const nuevaSeleccion = {
+      liner_ext: buscarBobinaEnStockPorToken(f.liner_ext),
+      onda_1: buscarBobinaEnStockPorToken(f.onda_1),
+      entretapa: f.es_doble_onda ? buscarBobinaEnStockPorToken(f.entretapa) : '',
+      onda_2: f.es_doble_onda ? buscarBobinaEnStockPorToken(f.onda_2) : '',
+      liner_int: buscarBobinaEnStockPorToken(f.liner_int)
+    };
+
+    const resumen = f.es_doble_onda
+      ? `${f.liner_ext} / ${f.onda_1} / ${f.entretapa} / ${f.onda_2} / ${f.liner_int}`
+      : `${f.liner_ext} / ${f.onda_1} / ${f.liner_int}`;
+
+    setPortabobinasManual(nuevaSeleccion);
+    setMotivoAlternativa(`Fórmula ${f.formula_tipo} (${f.clave}): ${resumen}`);
   };
 
   const clavesVisibles = claves.filter(c => {
@@ -257,6 +315,29 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+
+          } else if (header.includes('claves') && header.includes('tipos de papeles')) {
+          const recetasPayload = lineas.slice(1).map(l => {
+            const c = l.split(';');
+            return {
+              clave: c[0]?.trim(),                 
+              p1: c[1]?.trim(),
+              p2: c[2]?.trim(),
+              p3: c[3]?.trim(),
+              p4: c[4]?.trim(),
+              p5: c[5]?.trim(),
+              formula_tipo: c[6]?.trim()
+            };
+          }).filter(x => x.clave && (x.formula_tipo === 'ORIGINAL' || x.formula_tipo === 'ALTERNATIVO'));
+
+          const res = await apiFetch('/api/corrugadora/importar-recetas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recetas: recetasPayload })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+
         } else {
           alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, Bobinas.csv o PENDIENTES DE CORRUGADORA.csv.');
         }
@@ -864,6 +945,31 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
               {usarPapelAlternativo && (
                 <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #f59e0b' }}>
+                    {formulasClaveActual.length > 0 && (
+                    <div style={{ marginBottom: '10px', backgroundColor: '#fef3c7', padding: '8px 10px', borderRadius: '6px', border: '1px solid #f59e0b' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#92400e', display: 'block', marginBottom: '4px' }}>
+                        ⚡ Cargar Fórmula Aprobada de RECETAS.csv ({formulasClaveActual.length} opciones para {claveSeleccionada}):
+                      </label>
+                      <select
+                        defaultValue=""
+                        onChange={(e) => aplicarFormulaReceta(e.target.value)}
+                        style={{ width: '100%', padding: '7px', borderRadius: '5px', border: '1px solid #d97706', fontWeight: 'bold', fontSize: '0.82rem', backgroundColor: '#fff' }}
+                      >
+                        <option value="">-- Elegir fórmula Original o Alternativa para pre-cargar bobinas --</option>
+                        {formulasClaveActual.map((f, idx) => {
+                          const txt = f.es_doble_onda
+                            ? `${f.liner_ext} / ${f.onda_1} / ${f.entretapa} / ${f.onda_2} / ${f.liner_int}`
+                            : `${f.liner_ext} / ${f.onda_1} / ${f.liner_int}`;
+                          return (
+                            <option key={f.id} value={f.id}>
+                              {f.formula_tipo === 'ORIGINAL' ? '⭐ ORIGINAL' : `🔄 ALT #${idx}`}: {txt}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  )}
+                  
                   <div style={{ display: 'grid', gridTemplateColumns: `repeat(${esDobleOndaActual ? 5 : 3}, 1fr)`, gap: '8px', marginBottom: '10px' }}>
                     {[
                       { key: 'liner_ext', label: '1. Liner Ext' },
