@@ -896,8 +896,23 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
               ) : (
                 pedidosFiltradosClave.map(ord => {
                   const estaElegida = ordenesSeleccionadasIA.includes(Number(ord.numero_orden));
+                  const totalOrig = Number(ord.planchas_originales) || Number(ord.planchas_necesarias) || 0;
+                  const pend = Number(ord.cantidad_pendiente) || 0;
+                  const esParcial = totalOrig > 0 && pend < totalOrig;
+                  const pctFaltante = totalOrig > 0 ? Math.max(1, Math.round((pend / totalOrig) * 100)) : 100;
+                  const pctProg = Math.max(0, 100 - pctFaltante);
+
                   return (
-                    <div key={ord.numero_orden} style={{ padding: '10px', borderRadius: '6px', border: estaElegida ? '2px solid #7c3aed' : '1px solid #e2e8f0', backgroundColor: estaElegida ? '#f5f3ff' : '#fff', fontSize: '0.82rem' }}>
+                    <div
+                      key={ord.numero_orden}
+                      style={{
+                        padding: '10px',
+                        borderRadius: '6px',
+                        border: estaElegida ? '2px solid #7c3aed' : esParcial ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+                        backgroundColor: estaElegida ? '#f5f3ff' : esParcial ? '#fffbeb' : '#fff',
+                        fontSize: '0.82rem'
+                      }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                           <input type="checkbox" checked={estaElegida} onChange={() => toggleSeleccionOrdenIA(ord.numero_orden)} />
@@ -907,10 +922,20 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                           {ord.ancho_mm} × {ord.largo_mm} mm
                         </span>
                       </div>
-                      <div style={{ fontWeight: 'bold', color: '#1e293b', marginTop: '2px' }}>{ord.cliente}</div>
+
+                      {esParcial && (
+                        <div style={{ marginTop: '5px', backgroundColor: '#ffedd5', color: '#c2410c', border: '1px solid #fb923c', borderRadius: '5px', padding: '4px 8px', fontSize: '0.76rem', fontWeight: 'bold' }}>
+                          🟠 Parcial: {pctProg}% prog. · Falta {pctFaltante}% ({pend} de {totalOrig} pl.)
+                        </div>
+                      )}
+
+                      <div style={{ fontWeight: 'bold', color: '#1e293b', marginTop: '4px' }}>{ord.cliente}</div>
                       <div style={{ color: '#64748b', fontSize: '0.76rem' }}>{ord.producto_descripcion}</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
-                        <span>Planchas: <strong>{ord.planchas_necesarias}</strong> ({ord.cantidad_pendiente} caj.)</span>
+                        <span>
+                          {esParcial ? 'Restan:' : 'Planchas:'} <strong>{pend}</strong>
+                          {esParcial ? ` / ${totalOrig}` : ` (${ord.cantidad_pendiente} caj.)`}
+                        </span>
                         <div style={{ display: 'flex', gap: '4px' }}>
                           <button type="button" onClick={() => { setForzarOrdenId(String(ord.numero_orden)); ejecutarCerebroIA(); }} style={{ padding: '3px 7px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}>
                             🧠 Combinar
