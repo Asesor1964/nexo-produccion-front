@@ -52,7 +52,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const esClaveCorrugadoraConversion = (claveStr) =>
     String(claveStr || '').trim().toUpperCase().startsWith('T');
 
-  const cargarContexto = async () => {
+  const cargarContexto = async () => {     
     setCargando(true);
     try {
       const res = await apiFetch('/api/corrugadora/contexto');
@@ -210,6 +210,28 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     setOrdenesSeleccionadasIA(prev =>
       prev.includes(num) ? prev.filter(id => id !== num) : [...prev, num]
     );
+  };
+
+  const darPorCumplidoPendiente = async (ord) => {
+    const ok = window.confirm(
+      `¿Dar por cumplida la orden #${ord.numero_orden} (${ord.cliente})?\n\nSe cerrará el saldo pendiente de ${ord.cantidad_pendiente} planchas y saldrá de la lista de Corrugadora.`
+    );
+    if (!ok) return;
+
+    try {
+      const res = await apiFetch(`/api/corrugadora/pendientes/${ord.numero_orden}/cerrar`, {
+        method: 'PUT'
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setOrdenesSeleccionadasIA(prev => prev.filter(id => id !== Number(ord.numero_orden)));
+        cargarContexto();
+      } else {
+        alert(`❌ ${data.error}`);
+      }
+    } catch (e) {
+      alert('❌ Error de conexión al cerrar el pendiente.');
+    }
   };
 
   const handleAgregarAncho = async (e) => {
@@ -931,7 +953,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
                       <div style={{ fontWeight: 'bold', color: '#1e293b', marginTop: '4px' }}>{ord.cliente}</div>
                       <div style={{ color: '#64748b', fontSize: '0.76rem' }}>{ord.producto_descripcion}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
                         <span>
                           {esParcial ? 'Restan:' : 'Planchas:'} <strong>{pend}</strong>
                           {esParcial ? ` / ${totalOrig}` : ` (${ord.cantidad_pendiente} caj.)`}
@@ -942,6 +964,14 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                           </button>
                           <button type="button" onClick={() => agregarOrdenAMesaManual(ord)} style={{ padding: '3px 7px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}>
                             + Mesa
+                          </button>
+                          <button
+                            type="button"
+                            title="Dar por cumplido / cerrar saldo pendiente"
+                            onClick={() => darPorCumplidoPendiente(ord)}
+                            style={{ padding: '3px 7px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 'bold', cursor: 'pointer' }}
+                          >
+                            ✓ Cumplido
                           </button>
                         </div>
                       </div>
