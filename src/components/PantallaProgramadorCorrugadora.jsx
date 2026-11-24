@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 
-export default function PantallaProgramadorCorrugadora() {
+export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const [anchos, setAnchos] = useState([]);
   const [claves, setClaves] = useState([]);
   const [pedidos, setPedidos] = useState([]);
@@ -558,6 +558,16 @@ export default function PantallaProgramadorCorrugadora() {
             {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV'}
             <input type="file" accept=".csv" disabled={importandoCSV} onChange={handleImportarCSVCorrugadora} style={{ display: 'none' }} />
           </label>
+          {onIrAStock && (
+            <button
+              type="button"
+              onClick={onIrAStock}
+              style={{ padding: '9px 14px', borderRadius: '8px', border: '2px solid #0f766e', backgroundColor: '#f0fdfa', color: '#0f766e', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              🧻 Ver Stock Bobinas
+            </button>
+          )}
+          
         </div>
       </div>
 

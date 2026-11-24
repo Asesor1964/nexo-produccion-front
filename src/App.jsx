@@ -12,6 +12,7 @@ import PantallaCargaManual from './components/PantallaCargaManual'; // 👈 NUEV
 import PantallaHerramentales from './components/PantallaHerramentales';
 import PantallaProgramadorCorrugadora from './components/PantallaProgramadorCorrugadora';
 import PantallaMaquinistaCorrugadora from './components/PantallaMaquinistaCorrugadora';
+import PantallaStockPapeles from './components/PantallaStockPapeles';
 
 export default function App() {
   const [usuarioActual, setUsuarioActual] = useState(null);
@@ -103,7 +104,6 @@ export default function App() {
         </div>
 
         {/* Botonera Dinámica según Permisos */}
-        {/* Botonera Dinámica según Permisos */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', width: '90%', maxWidth: '800px' }}>
           
           {tienePermiso('desarrollador') && (
@@ -179,6 +179,12 @@ export default function App() {
             </button>
          )}
 
+            <button
+              onClick={() => setRolActivo('stock-papeles')}
+              style={{ padding: '30px', fontSize: '1.5rem', backgroundColor: '#0f766e', color: 'white', border: 'none', borderRadius: '15px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 6px 10px rgba(0,0,0,0.15)' }}>
+              🧻 Stock de Bobinas
+            </button>
+
           {tienePermiso('configuracion') && (
             <button 
               onClick={() => setRolActivo('configuracion')}
@@ -245,6 +251,7 @@ export default function App() {
         {rolActivo === 'herramentales' && <PantallaHerramentales />}
         {rolActivo === 'corrugadora' && <PantallaProgramadorCorrugadora />}
         {rolActivo === 'maquinista-corrugadora' && <PantallaMaquinistaCorrugadora />}
+        {rolActivo === 'stock-papeles' && <PantallaStockPapeles />}
       </div>
 
     </div>
