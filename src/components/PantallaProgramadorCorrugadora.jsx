@@ -133,18 +133,111 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     else if (t.startsWith('SQ')) palabraTipo = 'SEMI';
     else if (t.startsWith('O')) palabraTipo = 'ONDA';
 
-    // 1. Coincidencia exacta de tipo + gramaje
-    const exacto = papelesStock.find(p =>
-      String(p.tipo_papel || '').toUpperCase().includes(palabraTipo) &&
-      (gr === 0 || Number(p.gramaje) === gr)
-    );
-    if (exacto) return exacto.codigo;
+    // 1. Coincidencia exacta de tipo + gramaje (mayor stock primero)
+    const exactos = papelesStock
+      .filter(p =>
+        String(p.tipo_papel || '').toUpperCase().includes(palabraTipo) &&
+        (gr === 0 || Number(p.gramaje) === gr)
+      )
+      .sort((a, b) => Number(b.stock_kg || 0) - Number(a.stock_kg || 0));
+    if (exactos.length > 0) return exactos[0].codigo;
 
     // 2. Solo por tipo con gramaje más cercano
     const mismoTipo = papelesStock
       .filter(p => palabraTipo && String(p.tipo_papel || '').toUpperCase().includes(palabraTipo))
-      .sort((a, b) => Math.abs(Number(a.gramaje) - gr) - Math.abs(Number(b.gramaje) - gr));
+      .sort((a, b) => Math.abs(Number(a.gramaje) - gr) - Math.abs(Number(b.gramaje) - gr) || (Number(b.stock_kg || 0) - Number(a.stock_kg || 0)));
     return mismoTipo[0]?.codigo || '';
+  };
+
+  // Busca una bobina real del stock a partir del texto de CLAVES.csv (ej: "T.LINER PESADO", "ONDA ENC")
+  const buscarPapelStockPorIdeal = (textoIdeal, gramajeIdeal, esBlanco = false) => {
+    if (!papelesStock.length) return null;
+    const txt = String(textoIdeal || '').toUpperCase();
+    const gr = Number(gramajeIdeal) || 0;
+
+    const filtrarPorTipo = (fn) => papelesStock.filter(fn);
+    let candidatos = [];
+
+    if (esBlanco || txt.includes('BLANCO')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('BLANCO') || String(p.nombre || '').toUpperCase().includes('BLANCO'));
+    } else if (txt.includes('ENC')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('ENCOL') || String(p.nombre || '').toUpperCase().includes('ENCOL'));
+      if (candidatos.length === 0) {
+        candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('ONDA'));
+      }
+    } else if (txt.includes('KRAFT')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('KRAFT'));
+    } else if (txt.includes('LINER') || txt.includes('TEST')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('TEST') || String(p.tipo_papel || '').toUpperCase().includes('LINER'));
+    } else if (txt.includes('SEMI')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('SEMI'));
+    } else if (txt.includes('ONDA') || txt.includes('MED')) {
+      candidatos = filtrarPorTipo(p => String(p.tipo_papel || '').toUpperCase().includes('ONDA'));
+    }
+
+    if (candidatos.length === 0) return null;
+
+    const exactos = candidatos
+      .filter(p => gr > 0 && Number(p.gramaje) === gr)
+      .sort((a, b) => Number(b.stock_kg || 0) - Number(a.stock_kg || 0));
+    if (exactos.length > 0) return exactos[0];
+
+    return [...candidatos].sort(
+      (a, b) => Math.abs(Number(a.gramaje) - gr) - Math.abs(Number(b.gramaje) - gr) || (Number(b.stock_kg || 0) - Number(a.stock_kg || 0))
+    )[0];
+  };
+
+  const formatearPapelAsignado = (obj) => {
+    if (!obj) return null;
+    return {
+      codigo: obj.codigo,
+      nombre: obj.nombre,
+      gramaje: obj.gramaje,
+      tipo_papel: obj.tipo_papel || '',
+      fabricante: obj.fabricante || obj.proveedor || ''
+    };
+  };
+
+  // Resuelve los 3 o 5 portabobinas reales desde Stock (priorizando RECETAS.csv ORIGINAL y luego CLAVES.csv)
+  const resolverPortabobinasDesdeStock = (claveMat, recetaObj) => {
+    const claveNorm = String(claveMat || '').trim().toUpperCase();
+    const base = claveNorm.split(/\s+/)[0];
+    const esBlanco = claveNorm.includes('BLANCO');
+    const rec = recetaObj || claves.find(c => c.clave === claveNorm) || claves.find(c => c.clave === base) || {};
+    const formulaOrig =
+      recetasFormulas.find(f => (f.clave === claveNorm || f.clave === base) && f.formula_tipo === 'ORIGINAL') ||
+      recetasFormulas.find(f => f.clave === claveNorm || f.clave === base) ||
+      null;
+
+    const esDoble = Boolean(rec.es_doble_onda || formulaOrig?.es_doble_onda || claveNorm.includes('Z'));
+
+    const resolverPuesto = (tokenFormula, idealTxt, idealGr, blancoFlag = false) => {
+      if (tokenFormula) {
+        const cod = buscarBobinaEnStockPorToken(tokenFormula);
+        const pap = papelesStock.find(p => p.codigo === cod);
+        if (pap) return formatearPapelAsignado(pap);
+      }
+      const papIdeal = buscarPapelStockPorIdeal(idealTxt, idealGr, blancoFlag);
+      return formatearPapelAsignado(papIdeal);
+    };
+
+    const resultado = {};
+    const p1 = resolverPuesto(formulaOrig?.liner_ext, rec.liner_ext_ideal, rec.liner_ext_gramaje, esBlanco);
+    const p2 = resolverPuesto(formulaOrig?.onda_1, rec.medium_ideal, rec.onda1_gramaje, false);
+    if (p1) resultado.liner_ext = p1;
+    if (p2) resultado.onda_1 = p2;
+
+    if (esDoble) {
+      const p3 = resolverPuesto(formulaOrig?.entretapa, rec.entretapa_ideal, rec.entretapa_gramaje, false);
+      const p4 = resolverPuesto(formulaOrig?.onda_2, rec.onda2_ideal, rec.onda2_gramaje, false);
+      if (p3) resultado.entretapa = p3;
+      if (p4) resultado.onda_2 = p4;
+    }
+
+    const p5 = resolverPuesto(formulaOrig?.liner_int, rec.liner_int_ideal, rec.liner_int_gramaje, false);
+    if (p5) resultado.liner_int = p5;
+
+    return Object.keys(resultado).length > 0 ? resultado : null;
   };
 
   const aplicarFormulaReceta = (formulaId) => {
@@ -240,7 +333,24 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
       const claveNorm = String(prog.clave_material || '').trim().toUpperCase();
       const base = claveNorm.split(/\s+/)[0];
       const receta = claves.find((c) => c.clave === claveNorm) || claves.find((c) => c.clave === base) || null;
-      return { ...prog, receta };
+
+      let portabobinas = prog.portabobinas_asignados;
+      if (!portabobinas || Object.keys(portabobinas).length === 0) {
+        portabobinas = resolverPortabobinasDesdeStock(prog.clave_material, receta);
+      } else {
+        // Si ya tenía bobinas guardadas sin fabricante, completarlo desde stock
+        const copia = {};
+        Object.entries(portabobinas).forEach(([k, v]) => {
+          const pap = papelesStock.find(p => p.codigo === v?.codigo);
+          copia[k] = {
+            ...v,
+            fabricante: v?.fabricante || pap?.fabricante || pap?.proveedor || ''
+          };
+        });
+        portabobinas = copia;
+      }
+
+      return { ...prog, receta, portabobinas_asignados: portabobinas };
     });
     imprimirOrdenesCorrugado(enriquecidas);
   };
@@ -506,7 +616,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         if (portabobinasManual[k]) {
           const obj = buscarPapel(portabobinasManual[k]);
           seleccionados[k] = obj
-            ? { codigo: obj.codigo, nombre: obj.nombre, gramaje: obj.gramaje, tipo_papel: obj.tipo_papel, fabricante: obj.fabricante || '' }
+            ? formatearPapelAsignado(obj)
             : { codigo: portabobinasManual[k], nombre: portabobinasManual[k], gramaje: 0, fabricante: '' };
         }
       });
@@ -520,6 +630,12 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
       papelFinal = Object.entries(seleccionados)
         .map(([k, v]) => `${k.toUpperCase()}: ${v.codigo} (${v.gramaje}g)`)
         .join(' | ');
+    } else {
+      // Auto-asignar bobinas reales del stock (código + fabricante) según RECETAS.csv / CLAVES.csv
+      portabobinasPayload = resolverPortabobinasDesdeStock(datosTirada.clave_material);
+      if (portabobinasPayload) {
+        papelFinal = Object.values(portabobinasPayload).map(v => v.codigo).join(' - ');
+      }
     }
 
     const esEdicion = Boolean(editandoProgramaId && modoVista === 'MANUAL');
