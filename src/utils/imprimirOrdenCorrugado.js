@@ -14,23 +14,27 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
   const construirCaras = (prog) => {
     const asig = prog.portabobinas_asignados || {};
     const rec = prog.receta || {};
+    const esDualArch = Boolean(
+      rec.es_dual_arch || asig.onda_refuerzo?.codigo
+    );
     const esDoble = Boolean(
-      rec.es_doble_onda || asig.entretapa?.codigo || asig.onda_2?.codigo
+      rec.es_doble_onda || asig.entretapa?.codigo || asig.onda_2?.codigo || esDualArch
     );
 
-    const puestos = esDoble
-      ? [
-          { cara: 1, key: 'liner_ext', esOnda: false, fallbackNom: rec.liner_ext_ideal, fallbackGr: rec.liner_ext_gramaje },
-          { cara: 2, key: 'onda_1', esOnda: true, fallbackNom: rec.medium_ideal, fallbackGr: rec.onda1_gramaje },
-          { cara: 3, key: 'entretapa', esOnda: false, fallbackNom: rec.entretapa_ideal, fallbackGr: rec.entretapa_gramaje },
-          { cara: 4, key: 'onda_2', esOnda: true, fallbackNom: rec.onda2_ideal, fallbackGr: rec.onda2_gramaje },
-          { cara: 5, key: 'liner_int', esOnda: false, fallbackNom: rec.liner_int_ideal, fallbackGr: rec.liner_int_gramaje }
-        ]
-      : [
-          { cara: 1, key: 'liner_ext', esOnda: false, fallbackNom: rec.liner_ext_ideal, fallbackGr: rec.liner_ext_gramaje },
-          { cara: 2, key: 'onda_1', esOnda: true, fallbackNom: rec.medium_ideal, fallbackGr: rec.onda1_gramaje },
-          { cara: 3, key: 'liner_int', esOnda: false, fallbackNom: rec.liner_int_ideal, fallbackGr: rec.liner_int_gramaje }
-        ];
+    const puestosBase = [
+      { key: 'liner_ext', esOnda: false, fallbackNom: rec.liner_ext_ideal, fallbackGr: rec.liner_ext_gramaje },
+      { key: 'onda_1', esOnda: true, fallbackNom: rec.medium_ideal, fallbackGr: rec.onda1_gramaje },
+      ...(esDoble ? [
+        { key: 'entretapa', esOnda: false, fallbackNom: rec.entretapa_ideal, fallbackGr: rec.entretapa_gramaje },
+        { key: 'onda_2', esOnda: true, fallbackNom: rec.onda2_ideal, fallbackGr: rec.onda2_gramaje }
+      ] : []),
+      ...(esDualArch ? [
+        { key: 'onda_refuerzo', esOnda: true, fallbackNom: rec.onda_refuerzo_ideal || 'REFUERZO ONDA 2 (DUAL ARCH)', fallbackGr: 0 }
+      ] : []),
+      { key: 'liner_int', esOnda: false, fallbackNom: rec.liner_int_ideal, fallbackGr: rec.liner_int_gramaje }
+    ];
+
+    const puestos = puestosBase.map((p, i) => ({ ...p, cara: i + 1 }));
 
     const anchoM = (Number(prog.ancho_bobina_mm) || 0) / 1000;
     const metros = Number(prog.metros_lineales) || 0;

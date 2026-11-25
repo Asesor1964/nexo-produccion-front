@@ -36,8 +36,10 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   // Selector de Papel Ideal vs Papel Alternativo Manual (Reserva de Stock)
   const [usarPapelAlternativo, setUsarPapelAlternativo] = useState(false);
   const [portabobinasManual, setPortabobinasManual] = useState({
-    liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: ''
+    liner_ext: '', onda_1: '', entretapa: '', onda_2: '', onda_refuerzo: '', liner_int: ''
   });
+  const [forzarDobleOndaManual, setForzarDobleOndaManual] = useState(false);
+  const [usarDualArch, setUsarDualArch] = useState(false);
   const [motivoAlternativa, setMotivoAlternativa] = useState('');
   const [habilitarConversionAlAprobar, setHabilitarConversionAlAprobar] = useState(true);
 
@@ -98,7 +100,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const esBlancoActual = String(claveSeleccionada || '').toUpperCase().includes('BLANCO');
 
   const obtenerPapelesOrdenados = (puesto) => {
-    const esOnda = puesto === 'onda_1' || puesto === 'onda_2';
+    const esOnda = puesto === 'onda_1' || puesto === 'onda_2' || puesto === 'onda_refuerzo';
     return [...papelesStock].sort((a, b) => {
       const tipoA = String(a.tipo_papel || '').toUpperCase();
       const tipoB = String(b.tipo_papel || '').toUpperCase();
@@ -667,7 +669,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     if (usarPapelAlternativo) {
       const buscarPapel = (cod) => papelesStock.find(p => p.codigo === cod) || null;
       const seleccionados = {};
-      ['liner_ext', 'onda_1', 'entretapa', 'onda_2', 'liner_int'].forEach((k) => {
+      ['liner_ext', 'onda_1', 'entretapa', 'onda_2', 'onda_refuerzo', 'liner_int'].forEach((k) => {
         if (portabobinasManual[k]) {
           const obj = buscarPapel(portabobinasManual[k]);
           seleccionados[k] = obj
@@ -725,7 +727,10 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         setEditandoProgramaId(null);
         setUsarPapelAlternativo(false);
         setMotivoAlternativa('');
-        setPortabobinasManual({ liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: '' });
+        setPortabobinasManual({ liner_ext: '', onda_1: '', entretapa: '', onda_2: '', onda_refuerzo: '', liner_int: '' });
+        setForzarDobleOndaManual(false);
+        setUsarDualArch(false);
+
         cargarContexto();
       } else {
         alert(`❌ Error: ${data.error}`);
@@ -983,25 +988,77 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
             {claveEditando && (
               <form onSubmit={guardarMatrizClave}>
-                <h4 style={{ marginTop: 0 }}>Editando Clave: <span style={{ color: '#d97706' }}>{claveEditando.clave}</span></h4>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+                  <h4 style={{ margin: 0 }}>Editando Clave: <span style={{ color: '#d97706' }}>{claveEditando.clave}</span></h4>
+                  <label style={{ fontSize: '0.84rem', fontWeight: 'bold', color: '#7c3aed', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(claveEditando.es_dual_arch)}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        setClaveEditando({
+                          ...claveEditando,
+                          es_dual_arch: checked,
+                          ...(checked ? { onda: 'CB', es_doble_onda: true } : {})
+                        });
+                      }}
+                    />
+                    ⚡ Habilitar Dual Arch (Refuerzo Onda 2 → 6 papeles)
+                  </label>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: '10px', marginBottom: '12px' }}>
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Tipo Onda:</label>
-                    <select value={claveEditando.onda || 'C'} onChange={e => setClaveEditando({ ...claveEditando, onda: e.target.value })} style={{ width: '100%', padding: '7px' }}>
-                      <option value="B">Onda B</option>
-                      <option value="C">Onda C</option>
-                      <option value="CB">Doble Onda CB</option>
-                      <option value="E">Micro Onda E</option>
+                    <select
+                      value={claveEditando.onda || (claveEditando.es_doble_onda ? 'CB' : 'C')}
+                      onChange={e => {
+                        const nuevaOnda = e.target.value;
+                        setClaveEditando({
+                          ...claveEditando,
+                          onda: nuevaOnda,
+                          es_doble_onda: nuevaOnda === 'CB'
+                        });
+                      }}
+                      style={{ width: '100%', padding: '7px', borderRadius: '5px', border: '1px solid #cbd5e1', fontWeight: 'bold' }}
+                    >
+                      <option value="B">Onda B (3 papeles)</option>
+                      <option value="C">Onda C (3 papeles)</option>
+                      <option value="CB">Doble Onda CB (5 papeles)</option>
+                      <option value="E">Micro Onda E (3 papeles)</option>
                     </select>
                   </div>
+
                   <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Liner Exterior Ideal:</label>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>1. Liner Exterior Ideal:</label>
                     <input type="text" value={claveEditando.liner_ext_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, liner_ext_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
                   </div>
+
                   <div>
-                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Onda / Medium Ideal:</label>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>2. Onda 1 / Medium Ideal:</label>
                     <input type="text" value={claveEditando.medium_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, medium_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
                   </div>
+
+                  {(claveEditando.es_doble_onda || claveEditando.onda === 'CB') && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>3. Entretapa Ideal:</label>
+                        <input type="text" value={claveEditando.entretapa_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, entretapa_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>4. Onda 2 Ideal:</label>
+                        <input type="text" value={claveEditando.onda2_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, onda2_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
+                      </div>
+                    </>
+                  )}
+
+                  {claveEditando.es_dual_arch && (
+                    <div>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#7c3aed' }}>5. ⚡ Refuerzo Onda 2 (Dual Arch):</label>
+                      <input type="text" placeholder="Ej: ONDA 110g / SEMIQ 125g" value={claveEditando.onda_refuerzo_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, onda_refuerzo_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box', border: '2px solid #7c3aed', borderRadius: '4px' }} />
+                    </div>
+                  )}
+
                   <div>
                     <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Liner Interior Ideal:</label>
                     <input type="text" value={claveEditando.liner_int_ideal || ''} onChange={e => setClaveEditando({ ...claveEditando, liner_int_ideal: e.target.value })} style={{ width: '100%', padding: '7px', boxSizing: 'border-box' }} />
@@ -1230,35 +1287,67 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                     </div>
                   )}
                   
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${esDobleOndaActual ? 5 : 3}, 1fr)`, gap: '8px', marginBottom: '10px' }}>
-                    {[
-                      { key: 'liner_ext', label: '1. Liner Ext' },
-                      { key: 'onda_1', label: '2. Onda 1' },
-                      ...(esDobleOndaActual ? [
-                        { key: 'entretapa', label: '3. Entretapa' },
-                        { key: 'onda_2', label: '4. Onda 2' }
+                  {(() => {
+                    const mostrarDoble = esDobleOndaActual || forzarDobleOndaManual;
+                    const estacionesManual = [
+                      { key: 'liner_ext', label: 'Liner Ext' },
+                      { key: 'onda_1', label: 'Onda 1' },
+                      ...(mostrarDoble ? [
+                        { key: 'entretapa', label: 'Entretapa' },
+                        { key: 'onda_2', label: 'Onda 2' }
                       ] : []),
-                      { key: 'liner_int', label: esDobleOndaActual ? '5. Liner Int' : '3. Liner Int' }
-                    ].map((est) => (
-                      <div key={est.key}>
-                        <label style={{ fontSize: '0.75rem', fontWeight: 'bold', display: 'block', marginBottom: '3px', color: '#92400e' }}>
-                          {est.label}:
-                        </label>
-                        <select
-                          value={portabobinasManual[est.key] || ''}
-                          onChange={(e) => setPortabobinasManual({ ...portabobinasManual, [est.key]: e.target.value })}
-                          style={{ width: '100%', padding: '7px 5px', borderRadius: '5px', border: '1px solid #f59e0b', fontSize: '0.78rem', fontWeight: 'bold', backgroundColor: '#fff' }}
-                        >
-                          <option value="">-- Ideal de clave --</option>
-                          {obtenerPapelesOrdenados(est.key).map((pap) => (
-                            <option key={`${pap.codigo}-${pap.ancho_mm || 0}`} value={pap.codigo}>
-                              {pap.codigo} · {pap.ancho_mm ? `[${pap.ancho_mm}mm] ` : ''}{pap.nombre} ({Math.round(pap.stock_kg)} kg)
-                            </option>
+                      ...(usarDualArch ? [{ key: 'onda_refuerzo', label: '⚡ Refuerzo Onda 2 (Dual Arch)' }] : []),
+                      { key: 'liner_int', label: 'Liner Int' }
+                    ];
+
+                    return (
+                      <>
+                        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '10px', fontSize: '0.8rem', fontWeight: 'bold', color: '#92400e' }}>
+                          <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <input
+                              type="checkbox"
+                              checked={mostrarDoble}
+                              onChange={(e) => setForzarDobleOndaManual(e.target.checked)}
+                            />
+                            🧱 Doble Onda (5 papeles)
+                          </label>
+                          <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', color: '#7c3aed' }}>
+                            <input
+                              type="checkbox"
+                              checked={usarDualArch}
+                              onChange={(e) => {
+                                setUsarDualArch(e.target.checked);
+                                if (e.target.checked) setForzarDobleOndaManual(true);
+                              }}
+                            />
+                            ⚡ Dual Arch (Refuerzo Onda 2 → 6 papeles)
+                          </label>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${estacionesManual.length}, minmax(135px, 1fr))`, gap: '8px', marginBottom: '10px' }}>
+                          {estacionesManual.map((est, idx) => (
+                            <div key={est.key}>
+                              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', display: 'block', marginBottom: '3px', color: est.key === 'onda_refuerzo' ? '#7c3aed' : '#92400e' }}>
+                                {idx + 1}. {est.label}:
+                              </label>
+                              <select
+                                value={portabobinasManual[est.key] || ''}
+                                onChange={(e) => setPortabobinasManual({ ...portabobinasManual, [est.key]: e.target.value })}
+                                style={{ width: '100%', padding: '7px 5px', borderRadius: '5px', border: est.key === 'onda_refuerzo' ? '2px solid #7c3aed' : '1px solid #f59e0b', fontSize: '0.78rem', fontWeight: 'bold', backgroundColor: '#fff' }}
+                              >
+                                <option value="">-- Ideal de clave --</option>
+                                {obtenerPapelesOrdenados(est.key).map((pap) => (
+                                  <option key={`${pap.codigo}-${pap.ancho_mm || 0}`} value={pap.codigo}>
+                                    {pap.codigo} · {pap.ancho_mm ? `[${pap.ancho_mm}mm] ` : ''}{pap.nombre} ({Math.round(pap.stock_kg)} kg)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   <div>
                     <label style={{ fontSize: '0.78rem', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
