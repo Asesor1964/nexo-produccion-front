@@ -282,7 +282,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
     if (claveSeleccionada === clave) {
       if (clavesCompatiblesExtra.length > 0) {
-        const [nuevaPrincipal, ...resto] = clavesCompatiblesExtra;
+        const [nuevaPrincipal, ...resto] = clavesCompatiblesExtra;   
         setClaveSeleccionada(nuevaPrincipal);
         setClavesCompatiblesExtra(resto);
       }
@@ -458,6 +458,61 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+
+          } else if (header.includes('sector') && header.includes('ancho') && header.includes('consumida')) {
+          const vistas = new Set();
+          const mapaGrupos = new Map();
+
+          lineas.slice(1).forEach(l => {
+            const c = l.split(';');
+            const codBobina = c[0]?.trim();
+            const tipoPapel = c[2]?.trim() || '';
+            const nombrePapel = c[3]?.trim() || '';
+            const proveedor = c[4]?.trim() || '';
+            const fabricante = c[5]?.trim() || '';
+            const anchoMm = Math.round(parseNumAR(c[6]));
+            const gramaje = Math.round(parseNumAR(c[9]));
+            const pesoKg = parseNumAR(c[11]);
+            const color = c[16]?.trim() || '';
+            const sector = (c[20] || '').trim().toUpperCase();
+            const consumida = (c[23] || '').trim().toUpperCase();
+
+            // Filtros: solo PAPEL CARTON, activas (FALSO), ancho >= 1000 mm y sin duplicados
+            if (!codBobina || vistas.has(codBobina)) return;
+            if (sector !== 'PAPEL CARTON') return;
+            if (consumida !== 'FALSO') return;
+            if (anchoMm < 1000 || pesoKg <= 0 || !nombrePapel) return;
+
+            vistas.add(codBobina);
+
+            const key = `${nombrePapel.toUpperCase()}|${fabricante.toUpperCase()}|${gramaje}|${anchoMm}`;
+            if (!mapaGrupos.has(key)) {
+              mapaGrupos.set(key, {
+                tipo_papel: tipoPapel,
+                nombre: nombrePapel,
+                proveedor,
+                fabricante,
+                color,
+                gramaje,
+                ancho_mm: anchoMm,
+                stock_kg: 0,
+                cantidad_bobinas: 0
+              });
+            }
+            const item = mapaGrupos.get(key);
+            item.stock_kg += pesoKg;
+            item.cantidad_bobinas += 1;
+          });
+
+          const grupos = Array.from(mapaGrupos.values());
+          const res = await apiFetch('/api/corrugadora/importar-macro-bobinas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grupos })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+
         } else if (header.includes('claves') && header.includes('tipos de papeles')) {
           const recetasPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
@@ -1196,8 +1251,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                         >
                           <option value="">-- Ideal de clave --</option>
                           {obtenerPapelesOrdenados(est.key).map((pap) => (
-                            <option key={pap.codigo} value={pap.codigo}>
-                              {pap.codigo} · {pap.nombre} ({Math.round(pap.stock_kg)} kg)
+                            <option key={`${pap.codigo}-${pap.ancho_mm || 0}`} value={pap.codigo}>
+                              {pap.codigo} · {pap.ancho_mm ? `[${pap.ancho_mm}mm] ` : ''}{pap.nombre} ({Math.round(pap.stock_kg)} kg)
                             </option>
                           ))}
                         </select>
