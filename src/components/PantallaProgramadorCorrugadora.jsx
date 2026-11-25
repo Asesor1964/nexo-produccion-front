@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api';
+import { imprimirOrdenesCorrugado } from '../utils/imprimirOrdenCorrugado';
 
 export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const [anchos, setAnchos] = useState([]);
@@ -7,7 +8,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const [pedidos, setPedidos] = useState([]);
   const [programas, setProgramas] = useState([]);
   const [papelesStock, setPapelesStock] = useState([]);
-  const [recetasFormulas, setRecetasFormulas] = useState([]);    
+  const [recetasFormulas, setRecetasFormulas] = useState([]);
   const [origenPedidos, setOrigenPedidos] = useState('');
   const [importandoCSV, setImportandoCSV] = useState(false);
   const [cargando, setCargando] = useState(true);
@@ -37,7 +38,6 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const [portabobinasManual, setPortabobinasManual] = useState({
     liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: ''
   });
-  const [papelAlternativoElegido, setPapelAlternativoElegido] = useState('');
   const [motivoAlternativa, setMotivoAlternativa] = useState('');
   const [habilitarConversionAlAprobar, setHabilitarConversionAlAprobar] = useState(true);
 
@@ -52,7 +52,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const esClaveCorrugadoraConversion = (claveStr) =>
     String(claveStr || '').trim().toUpperCase().startsWith('T');
 
-  const cargarContexto = async () => {     
+  const cargarContexto = async () => {
     setCargando(true);
     try {
       const res = await apiFetch('/api/corrugadora/contexto');
@@ -80,7 +80,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     } catch (error) {
       console.error('Error cargando contexto de corrugadora:', error);
     } finally {
-      setCargando(false);      
+      setCargando(false);
     }
   };
 
@@ -234,6 +234,17 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     }
   };
 
+  const imprimirDesdeProgramacion = (tiradasAImprimir) => {
+    const lista = Array.isArray(tiradasAImprimir) ? tiradasAImprimir : [tiradasAImprimir];
+    const enriquecidas = lista.map((prog) => {
+      const claveNorm = String(prog.clave_material || '').trim().toUpperCase();
+      const base = claveNorm.split(/\s+/)[0];
+      const receta = claves.find((c) => c.clave === claveNorm) || claves.find((c) => c.clave === base) || null;
+      return { ...prog, receta };
+    });
+    imprimirOrdenesCorrugado(enriquecidas);
+  };
+
   const handleAgregarAncho = async (e) => {
     e.preventDefault();
     const val = parseInt(nuevoAnchoInput, 10);
@@ -258,7 +269,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     } catch (e) {}
   };
 
-  // 📥 IMPORTADOR INTELIGENTE DE CSV (CLAVES, PAPELES/BOBINAS, PENDIENTES)
+  // 📥 IMPORTADOR INTELIGENTE DE CSV (CLAVES, PAPELES/BOBINAS, PENDIENTES, RECETAS)
   const handleImportarCSVCorrugadora = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -337,12 +348,11 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-
-          } else if (header.includes('claves') && header.includes('tipos de papeles')) {
+        } else if (header.includes('claves') && header.includes('tipos de papeles')) {
           const recetasPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
             return {
-              clave: c[0]?.trim(),                 
+              clave: c[0]?.trim(),
               p1: c[1]?.trim(),
               p2: c[2]?.trim(),
               p3: c[3]?.trim(),
@@ -359,9 +369,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-
         } else {
-          alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, Bobinas.csv o PENDIENTES DE CORRUGADORA.csv.');
+          alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, RECETAS.csv o PENDIENTES DE CORRUGADORA.csv.');
         }
         await cargarContexto();
       } catch (err) {
@@ -434,7 +443,6 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     });
     setPistasManuales(pistasMapeadas);
     setUsarPapelAlternativo(Boolean(prog.es_alternativa_manual));
-    setPapelAlternativoElegido(prog.es_alternativa_manual ? String(prog.papel_utilizado || '').replace(/^ALTERNATIVO:\s*/i, '') : '');
     setMotivoAlternativa(prog.motivo_alternativa || '');
     setModoVista('MANUAL');
   };
@@ -498,8 +506,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         if (portabobinasManual[k]) {
           const obj = buscarPapel(portabobinasManual[k]);
           seleccionados[k] = obj
-            ? { codigo: obj.codigo, nombre: obj.nombre, gramaje: obj.gramaje, tipo_papel: obj.tipo_papel }
-            : { codigo: portabobinasManual[k], nombre: portabobinasManual[k], gramaje: 0 };
+            ? { codigo: obj.codigo, nombre: obj.nombre, gramaje: obj.gramaje, tipo_papel: obj.tipo_papel, fabricante: obj.fabricante || '' }
+            : { codigo: portabobinasManual[k], nombre: portabobinasManual[k], gramaje: 0, fabricante: '' };
         }
       });
 
@@ -546,8 +554,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         setEditandoProgramaId(null);
         setUsarPapelAlternativo(false);
         setMotivoAlternativa('');
-        cargarContexto();
         setPortabobinasManual({ liner_ext: '', onda_1: '', entretapa: '', onda_2: '', liner_int: '' });
+        cargarContexto();
       } else {
         alert(`❌ Error: ${data.error}`);
       }
@@ -661,6 +669,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
             {importandoCSV ? '⏳ Importando...' : '📥 Importar CSV'}
             <input type="file" accept=".csv" disabled={importandoCSV} onChange={handleImportarCSVCorrugadora} style={{ display: 'none' }} />
           </label>
+
           {onIrAStock && (
             <button
               type="button"
@@ -670,7 +679,6 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
               🧻 Ver Stock Bobinas
             </button>
           )}
-          
         </div>
       </div>
 
@@ -708,10 +716,25 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
         </form>
       </div>
 
-      {/* VISTA: COLA DE FABRICACIÓN EN VIVO (SECUENCIADOR) */}
+      {/* VISTA: COLA DE FABRICACIÓN EN VIVO (SECUENCIADOR + IMPRESIÓN A4) */}
       {modoVista === 'COLA' && (
         <div style={{ backgroundColor: '#fff', padding: '1.4rem', borderRadius: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.06)', borderTop: '5px solid #16a34a', marginBottom: '1.5rem' }}>
-          <h3 style={{ marginTop: 0, color: '#15803d' }}>📋 Cola de Fabricación de Corrugadora (Vista en Vivo del Maquinista)</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+            <h3 style={{ margin: 0, color: '#15803d' }}>📋 Cola de Fabricación de Corrugadora (Vista en Vivo del Maquinista)</h3>
+            <button
+              type="button"
+              onClick={() => imprimirDesdeProgramacion(programasActivos)}
+              disabled={programasActivos.length === 0}
+              style={{
+                padding: '8px 14px', borderRadius: '8px', border: 'none',
+                backgroundColor: programasActivos.length === 0 ? '#94a3b8' : '#0f172a',
+                color: '#fff', fontWeight: 'bold', cursor: programasActivos.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              🖨️ Imprimir Toda la Cola (A4)
+            </button>
+          </div>
+
           {programasActivos.length === 0 ? (
             <p style={{ color: '#64748b', textAlign: 'center', padding: '2rem' }}>No hay tiradas programadas todavía. Aprobá una desde Sugerencias IA o Mesa Manual.</p>
           ) : (
@@ -734,18 +757,29 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                     </div>
                   </div>
 
-                  {prog.estado === 'Programada' && (
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button type="button" onClick={() => moverEnCola(idx, -1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Subir puesto">⬆️</button>
-                      <button type="button" onClick={() => moverEnCola(idx, 1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Bajar puesto">⬇️</button>
-                      <button type="button" onClick={() => editarProgramaEnMesa(prog)} style={{ padding: '5px 10px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #0284c7', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-                        ✏️ Cambiar Combinación
-                      </button>
-                      <button type="button" onClick={() => eliminarPrograma(prog)} style={{ padding: '5px 9px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', cursor: 'pointer' }}>
-                        🗑️
-                      </button>
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      title="Imprimir solo esta Orden de Corrugado (A4)"
+                      onClick={() => imprimirDesdeProgramacion(prog)}
+                      style={{ padding: '5px 10px', borderRadius: '6px', border: 'none', backgroundColor: '#0f172a', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      🖨️ A4
+                    </button>
+
+                    {prog.estado === 'Programada' && (
+                      <>
+                        <button type="button" onClick={() => moverEnCola(idx, -1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Subir puesto">⬆️</button>
+                        <button type="button" onClick={() => moverEnCola(idx, 1)} style={{ padding: '5px 9px', cursor: 'pointer' }} title="Bajar puesto">⬇️</button>
+                        <button type="button" onClick={() => editarProgramaEnMesa(prog)} style={{ padding: '5px 10px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #0284c7', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                          ✏️ Cambiar Combinación
+                        </button>
+                        <button type="button" onClick={() => eliminarPrograma(prog)} style={{ padding: '5px 9px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', cursor: 'pointer' }}>
+                          🗑️
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1000,7 +1034,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
               {usarPapelAlternativo && (
                 <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #f59e0b' }}>
-                    {formulasClaveActual.length > 0 && (
+                  {formulasClaveActual.length > 0 && (
                     <div style={{ marginBottom: '10px', backgroundColor: '#fef3c7', padding: '8px 10px', borderRadius: '6px', border: '1px solid #f59e0b' }}>
                       <label style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#92400e', display: 'block', marginBottom: '4px' }}>
                         ⚡ Cargar Fórmula Aprobada de RECETAS.csv ({formulasClaveActual.length} opciones para {claveSeleccionada}):

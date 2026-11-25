@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 
-export default function PantallaMaquinistaCorrugadora() {
+export default function PantallaMaquinistaCorrugadora() {    
   const [cola, setCola] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [ultimaActualizacion, setUltimaActualizacion] = useState('');
@@ -71,13 +71,14 @@ export default function PantallaMaquinistaCorrugadora() {
         return {
           titulo,
           papel: `${alt.codigo} — ${alt.nombre}`,
+          fabricante: alt.fabricante || '',
           gr: alt.gramaje || grIdeal,
           res: '🔄 ASIGNADO POR PCP',
           esBlanco,
           esAsignado: true
         };
       }
-      return { titulo, papel: papelIdeal, gr: grIdeal, res: resMin, esBlanco, esAsignado: false };
+      return { titulo, papel: papelIdeal, fabricante: '', gr: grIdeal, res: resMin, esBlanco, esAsignado: false };
     };
 
     const estaciones = [
@@ -118,7 +119,7 @@ export default function PantallaMaquinistaCorrugadora() {
             <div key={i} style={{
               backgroundColor: est.esBlanco ? '#f8fafc' : '#0f172a',
               color: est.esBlanco ? '#0f172a' : '#fff',
-              border: est.esBlanco ? '2px solid #cbd5e1' : '1px solid #334155',
+              border: est.esAsignado ? '2px solid #38bdf8' : est.esBlanco ? '2px solid #cbd5e1' : '1px solid #334155',
               borderRadius: '8px',
               padding: '10px',
               textAlign: 'center'
@@ -126,9 +127,14 @@ export default function PantallaMaquinistaCorrugadora() {
               <div style={{ fontSize: '0.75rem', color: est.esBlanco ? '#0369a1' : '#38bdf8', fontWeight: 'bold' }}>
                 {est.titulo}
               </div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 'bold', marginTop: '4px' }}>
+              <div style={{ fontSize: '1.02rem', fontWeight: 'bold', marginTop: '4px' }}>
                 {est.papel}
               </div>
+              {est.fabricante && (
+                <div style={{ fontSize: '0.78rem', color: est.esBlanco ? '#0f766e' : '#5eead4', fontWeight: 'bold', marginTop: '3px' }}>
+                  🏭 {est.fabricante}
+                </div>
+              )}
               {Number(est.gr) > 0 && (
                 <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: est.esBlanco ? '#1e293b' : '#fbbf24', marginTop: '2px' }}>
                   {est.gr} g/m²
@@ -136,7 +142,7 @@ export default function PantallaMaquinistaCorrugadora() {
               )}
               {est.res && (
                 <div style={{ fontSize: '0.76rem', color: est.esBlanco ? '#475569' : '#94a3b8', marginTop: '2px' }}>
-                  Mín: {est.res}
+                  {est.esAsignado ? est.res : `Mín: ${est.res}`}
                 </div>
               )}
             </div>
