@@ -216,6 +216,9 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
               </tbody>
             </table>
           </div>
+          <div class="firma-autor">
+            NEXO Producción · Desarrollado por Sergio Enrique Sanchez, 1964
+          </div>
         </div>
       `;
     })

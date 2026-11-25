@@ -254,6 +254,19 @@ export default function App() {
         {rolActivo === 'stock-papeles' && <PantallaStockPapeles />}
       </div>
 
+      {rolActivo !== 'monitor' && (
+        <footer style={{
+          textAlign: 'center',
+          padding: '10px 16px',
+          marginTop: '24px',
+          borderTop: '1px solid #e2e8f0',
+          fontSize: '0.75rem',
+          color: '#64748b'
+        }}>
+          NEXO Producción · Desarrollado por <strong>Sergio Enrique Sanchez, 1964</strong>
+        </footer>
+      )}
+
     </div>
   );
 }
