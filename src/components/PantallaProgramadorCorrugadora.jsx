@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 import { imprimirOrdenesCorrugado } from '../utils/imprimirOrdenCorrugado';
 
-export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
+export default function PantallaProgramadorCorrugadora({ onIrAStock }) {   
   const [anchos, setAnchos] = useState([]);
   const [claves, setClaves] = useState([]);
   const [pedidos, setPedidos] = useState([]);
@@ -355,7 +355,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
       return { ...prog, receta, portabobinas_asignados: portabobinas };
     });
 
-    imprimirOrdenesCorrugado(enriquecidas, stockPapeles);
+    imprimirOrdenesCorrugado(enriquecidas, papelesStock);
   };
 
   const handleAgregarAncho = async (e) => {
