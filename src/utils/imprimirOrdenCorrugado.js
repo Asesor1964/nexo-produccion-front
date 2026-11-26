@@ -1,5 +1,5 @@
 // Genera el documento físico A4 "ORDEN DE CORRUGADO - COMBINACIONES PROGRAMADAS"
-export function imprimirOrdenesCorrugado(tiradasInput) {
+export function imprimirOrdenesCorrugado(tiradasInput, stockPapeles = []) {
   const tiradas = Array.isArray(tiradasInput) ? tiradasInput : [tiradasInput];
   if (tiradas.length === 0) return;
 
@@ -10,6 +10,50 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
     hour: '2-digit',
     minute: '2-digit'
   });
+
+  const buscarOpcionesStock = (anchoMm, esOnda, gramajeObjetivo) => {
+    if (!Array.isArray(stockPapeles) || stockPapeles.length === 0) return [];
+    const anchoNum = Number(anchoMm) || 0;
+    const grObj = Number(gramajeObjetivo) || 0;
+
+    return stockPapeles
+      .filter((p) => {
+        if ((Number(p.stock_kg) || 0) <= 0) return false;
+        const anchoPapel = Number(p.ancho_mm) || 0;
+        if (anchoNum > 0 && anchoPapel > 0 && anchoPapel !== anchoNum) return false;
+
+        const txt = `${p.codigo || ''} ${p.nombre || ''} ${p.tipo || ''}`.toUpperCase();
+        const pareceOnda = txt.includes('ONDA') || txt.includes('MEDIUM') || txt.includes('FLUT') || txt.includes('SEMIQ');
+        return esOnda ? pareceOnda : !pareceOnda;
+      })
+      .sort((a, b) => {
+        if (grObj > 0) {
+          const difA = Math.abs((Number(a.gramaje) || 0) - grObj);
+          const difB = Math.abs((Number(b.gramaje) || 0) - grObj);
+          if (difA !== difB) return difA - difB;
+        }
+        return (Number(b.stock_kg) || 0) - (Number(a.stock_kg) || 0);
+      })
+      .slice(0, 2);
+  };
+
+  const renderOpcionesChofer = (c) => {
+    if (c.codigo !== 'RECETA') return '';
+    const opciones = buscarOpcionesStock(c.ancho, c.esOnda, c.gramaje);
+    const items = opciones
+      .map((op) => {
+        const bobs = Number(op.cantidad_bobinas) > 0 ? ` (${op.cantidad_bobinas}b)` : '';
+        return `<span>&#9744; <strong>${op.codigo}</strong> ${op.nombre || ''}${bobs}</span>`;
+      })
+      .join('');
+
+    return `
+      <div class="opciones-chofer">
+        ${items}
+        <span>&#9744; Otro: ____________</span>
+      </div>
+    `;
+  };
 
   const construirCaras = (prog) => {
     const asig = prog.portabobinas_asignados || {};
@@ -51,6 +95,7 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
 
       return {
         cara: p.cara,
+        esOnda: p.esOnda,
         codigo,
         gramaje,
         ancho: prog.ancho_bobina_mm || 0,
@@ -103,7 +148,10 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
             <td><strong>${c.codigo}</strong></td>
             <td class="num">${c.gramaje}</td>
             <td class="num">${c.ancho}</td>
-            <td>${c.descripcion}</td>
+            <td>
+              ${c.descripcion}
+              ${renderOpcionesChofer(c)}
+            </td>
             <td class="num"><strong>${c.kilos}</strong></td>
           </tr>
         `
@@ -183,7 +231,7 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
                 <th style="width:90px;">Papel</th>
                 <th class="num" style="width:45px;">Grs</th>
                 <th class="num" style="width:55px;">Ancho</th>
-                <th>Descripción / Fabricante</th>
+                <th>Descripción / Fabricante (Selección Chofer)</th>
                 <th class="num" style="width:60px;">Kilos</th>
               </tr>
             </thead>
@@ -245,16 +293,18 @@ export function imprimirOrdenesCorrugado(tiradasInput) {
         .linea-gruesa { border: none; border-top: 2px solid #000; margin: 6px 0; }
         .tabla-datos { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
         .tabla-datos th { border-bottom: 1.5px solid #000; padding: 4px; text-align: left; font-size: 11px; }
-        .tabla-datos td { padding: 5px 4px; vertical-align: top; border-bottom: 1px dashed #cbd5e1; }
+        .tabla-datos td { padding: 4px; vertical-align: top; border-bottom: 1px dashed #cbd5e1; }
         .sub { font-size: 10.5px; color: #333; }
         .num { text-align: right !important; }
         .center { text-align: center !important; }
+        .opciones-chofer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; font-size: 9px; color: #334155; }
         .horarios { display: flex; justify-content: flex-end; gap: 36px; margin: 10px 0 6px; font-size: 11.5px; }
         .totales-bar { display: flex; justify-content: space-between; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 5px 6px; margin-top: 4px; font-size: 12px; }
-        .seccion-paradas { margin-top: auto; padding-top: 18px; }
+        .seccion-paradas { margin-top: auto; padding-top: 14px; }
         .paradas-titulo { font-weight: bold; margin-bottom: 5px; font-size: 11.5px; }
         .tabla-paradas { width: 100%; border-collapse: collapse; }
-        .tabla-paradas th, .tabla-paradas td { border: 1px solid #000; padding: 4px; height: 22px; text-align: center; font-size: 11px; }
+        .tabla-paradas th, .tabla-paradas td { border: 1px solid #000; padding: 4px; height: 21px; text-align: center; font-size: 11px; }
+        .firma-autor { margin-top: 8px; text-align: right; font-size: 9px; color: #555; border-top: 1px solid #cbd5e1; padding-top: 3px; }
       </style>
     </head>
     <body>

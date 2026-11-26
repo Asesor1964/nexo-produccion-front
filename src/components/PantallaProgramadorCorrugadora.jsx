@@ -354,7 +354,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
 
       return { ...prog, receta, portabobinas_asignados: portabobinas };
     });
-    imprimirOrdenesCorrugado(enriquecidas);
+
+    imprimirOrdenesCorrugado(enriquecidas, stockPapeles);
   };
 
   const handleAgregarAncho = async (e) => {
