@@ -245,12 +245,13 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
   const aplicarFormulaReceta = (formulaId) => {
     const f = formulasClaveActual.find(x => String(x.id) === String(formulaId));
     if (!f) return;
-
+                                                      
     const nuevaSeleccion = {
       liner_ext: buscarBobinaEnStockPorToken(f.liner_ext),
       onda_1: buscarBobinaEnStockPorToken(f.onda_1),
       entretapa: f.es_doble_onda ? buscarBobinaEnStockPorToken(f.entretapa) : '',
       onda_2: f.es_doble_onda ? buscarBobinaEnStockPorToken(f.onda_2) : '',
+      onda_refuerzo: '',
       liner_int: buscarBobinaEnStockPorToken(f.liner_int)
     };
 
@@ -277,6 +278,43 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
       if (b.estado === 'En Proceso' && a.estado !== 'En Proceso') return 1;
       return (a.prioridad_secuencia || 999) - (b.prioridad_secuencia || 999) || a.id - b.id;
     });
+
+    const calcularCumplimientoCola = (pista) => {
+    const numOrden = Number(pista?.numero_orden);
+    if (!numOrden) return null;
+
+    const ord = pedidos.find(x => Number(x.numero_orden) === numOrden);
+    const requerida = Number(
+      ord?.planchas_originales ||
+      ord?.planchas_necesarias ||
+      pista?.planchas_necesarias ||
+      pista?.planchas_requeridas ||
+      0
+    );
+
+    const planchasTirada = Number(pista?.planchas_tirada) || 0;
+
+    // Suma todas las planchas de esta OP en toda la cola activa
+    const planchasEnCola = programasActivos.reduce((acc, prog) => {
+      const sumaProg = (prog.pistas_detalle || []).reduce((s, p) => {
+        return Number(p?.numero_orden) === numOrden ? s + (Number(p?.planchas_tirada) || 0) : s;
+      }, 0);
+      return acc + sumaProg;
+    }, 0);
+                                             
+    if (requerida > 0) {
+      const pctCola = Math.round((planchasEnCola / requerida) * 100);
+      const pctTirada = Math.round((planchasTirada / requerida) * 100);
+      return { pct: pctCola, pctTirada, planchasEnCola, requerida };
+    }
+
+    if (Number(pista?.cumplimiento_pct) > 0) {
+      const pct = Math.round(Number(pista.cumplimiento_pct));
+      return { pct, pctTirada: pct, planchasEnCola, requerida: 0 };
+    }
+
+    return null;
+  };
 
   const toggleClaveSeleccionada = (clave) => {
     setForzarOrdenId('');
@@ -929,8 +967,39 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                       <span>Trim <strong>{prog.trim_mm} mm ({prog.trim_porcentaje}%)</strong></span>
                       <span>Corrida <strong>{prog.metros_lineales} mts</strong></span>
                     </div>
-                    <div style={{ fontSize: '0.82rem', color: '#475569', marginTop: '4px' }}>
-                      {(prog.pistas_detalle || []).map(p => `OP #${p.numero_orden} (${p.salidas}×${p.ancho_mm}mm · ${p.planchas_tirada} pl.)`).join('  +  ')}
+                    <div style={{ fontSize: '0.82rem', color: '#475569', marginTop: '4px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                      {(prog.pistas_detalle || []).map((p, iP) => {
+                        const cump = calcularCumplimientoCola(p);
+                        const badgeStyle = !cump ? null
+                          : cump.pct >= 105
+                            ? { backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }
+                            : cump.pct >= 100
+                              ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' }
+                              : { backgroundColor: '#fef9c3', color: '#854d0e', border: '1px solid #fde047' };
+
+                        return (
+                          <span key={`${p.numero_orden}-${iP}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            {iP > 0 && <strong style={{ color: '#94a3b8', marginRight: '2px' }}>+</strong>}
+                            <span>OP #{p.numero_orden} ({p.salidas}×{p.ancho_mm}mm · {p.planchas_tirada} pl.)</span>
+                            {cump && (
+                              <span
+                                title={cump.requerida > 0
+                                  ? `Esta tirada: ${p.planchas_tirada} pl. (${cump.pctTirada}%) · Total en cola: ${cump.planchasEnCola} / ${cump.requerida} pl.`
+                                  : `Cumplimiento registrado: ${cump.pct}%`}
+                                style={{
+                                  ...badgeStyle,
+                                  padding: '1px 6px',
+                                  borderRadius: '10px',       
+                                  fontSize: '0.73rem',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                {cump.pct}% cump.
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1507,15 +1576,22 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                       trim_mm: trimManualMm,
                       trim_porcentaje: trimManualPct,
                       metros_lineales: metrosManuales,
-                      pistas: pistasManuales.map(pm => ({
-                        numero_orden: pm.orden.numero_orden,
-                        cliente: pm.orden.cliente,
-                        ancho_mm: pm.orden.ancho_mm,
-                        largo_mm: pm.orden.largo_mm,
-                        salidas: pm.salidas,
-                        ancho_ocupado_mm: pm.orden.ancho_mm * pm.salidas,
-                        planchas_tirada: Math.floor((metrosManuales * 1000) / (pm.orden.largo_mm || 1000)) * pm.salidas
-                      }))
+                      pistas: pistasManuales.map(pm => {
+                        const planchasT = Math.floor((metrosManuales * 1000) / (pm.orden.largo_mm || 1000)) * pm.salidas;
+                        const req = Number(pm.orden.planchas_originales || pm.orden.planchas_necesarias || pm.orden.cantidad_pendiente || 0);
+                        return {
+                          numero_orden: pm.orden.numero_orden,
+                          cliente: pm.orden.cliente,
+                          producto_descripcion: pm.orden.producto_descripcion || '',
+                          ancho_mm: pm.orden.ancho_mm,
+                          largo_mm: pm.orden.largo_mm,
+                          salidas: pm.salidas,
+                          ancho_ocupado_mm: pm.orden.ancho_mm * pm.salidas,
+                          planchas_tirada: planchasT,
+                          planchas_necesarias: req,
+                          cumplimiento_pct: req > 0 ? Math.round((planchasT / req) * 100) : 0
+                        };
+                      })
                     })}
                     style={{ width: '100%', padding: '12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '1rem', cursor: 'pointer' }}
                   >
