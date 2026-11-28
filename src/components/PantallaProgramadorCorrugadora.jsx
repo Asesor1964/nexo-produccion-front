@@ -189,7 +189,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
     )[0];
   };
 
-  const formatearPapelAsignado = (obj) => {
+  const formatearPapelAsignado = (obj) => {     
     if (!obj) return null;
     return {
       codigo: obj.codigo,
@@ -476,7 +476,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
-        } else if (header.includes('planchas necesarias') || header.includes('corrugado')) {
+        } else if ((header.includes('planchas necesarias') || header.includes('corrugado')) && !header.includes('trazados')) {
           const pendientesPayload = lineas.slice(1).map(l => {
             const c = l.split(';');
             return {
