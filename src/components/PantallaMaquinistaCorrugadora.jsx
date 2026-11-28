@@ -251,19 +251,44 @@ export default function PantallaMaquinistaCorrugadora() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '12px' }}>
-              {(activa.pistas_detalle || []).map((p, i) => (
-                <div key={i} style={{ backgroundColor: '#0f172a', border: `2px solid ${i === 0 ? '#3b82f6' : '#14b8a6'}`, borderRadius: '8px', padding: '12px' }}>
-                  <div style={{ fontSize: '0.8rem', color: i === 0 ? '#60a5fa' : '#2dd4bf', fontWeight: 'bold' }}>
-                    🔪 GUILLOTINA — CUCHILLA {i + 1} ({p.salidas} salida/s)
+              {(activa.pistas_detalle || []).map((p, i) => {
+                const trazRaw = String(p.trazados ?? '').trim();
+                const esLisa = trazRaw === '0';
+                const trazTexto = trazRaw === ''
+                  ? 'Sin dato'
+                  : esLisa
+                    ? 'LISA (0)'
+                    : trazRaw.replace(/;\s*/g, ' - ');
+
+                return (
+                  <div key={i} style={{ backgroundColor: '#0f172a', border: `2px solid ${i === 0 ? '#3b82f6' : '#14b8a6'}`, borderRadius: '8px', padding: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '0.8rem', color: i === 0 ? '#60a5fa' : '#2dd4bf', fontWeight: 'bold' }}>
+                        🔪 GUILLOTINA — CUCHILLA {i + 1} ({p.salidas} salida/s)
+                      </div>
+                      <span
+                        style={{
+                          backgroundColor: esLisa ? '#334155' : trazRaw ? '#78350f' : '#1e293b',
+                          color: esLisa ? '#e2e8f0' : trazRaw ? '#fde047' : '#94a3b8',
+                          border: `1px solid ${esLisa ? '#64748b' : trazRaw ? '#f59e0b' : '#475569'}`,
+                          padding: '2px 9px',
+                          borderRadius: '6px',
+                          fontSize: '0.86rem',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        📏 Trazados: {trazTexto}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff', margin: '6px 0 4px' }}>
+                      OP #{p.numero_orden} · Largo: {p.largo_mm} mm · Ancho: {p.ancho_mm} mm
+                    </div>
+                    <div style={{ color: '#cbd5e1', fontSize: '0.92rem' }}>
+                      {p.cliente} — <strong>{p.planchas_tirada} planchas</strong>
+                    </div>
                   </div>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#fff', margin: '4px 0' }}>
-                    OP #{p.numero_orden} · Largo: {p.largo_mm} mm · Ancho: {p.ancho_mm} mm
-                  </div>
-                  <div style={{ color: '#cbd5e1', fontSize: '0.92rem' }}>
-                    {p.cliente} — <strong>{p.planchas_tirada} planchas</strong>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

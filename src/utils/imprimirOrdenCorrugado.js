@@ -50,7 +50,7 @@ export function imprimirOrdenesCorrugado(tiradasInput, stockPapeles = []) {
     return `
       <div class="opciones-chofer">
         ${items}
-        <span>&#9744; Otro: ____________</span>
+        <span>&#9744; Otro: ____________</span>              
       </div>
     `;
   };
@@ -120,6 +120,8 @@ export function imprimirOrdenesCorrugado(tiradasInput, stockPapeles = []) {
           const salidas = Number(p.salidas) || 1;
           const cortes = p.largo_mm > 0 ? Math.floor((metros * 1000) / Number(p.largo_mm)) : 0;
           const planchas = Number(p.planchas_tirada) || cortes * salidas;
+          const trazRaw = String(p.trazados ?? '').trim();
+          const trazTexto = trazRaw === '' ? '-' : trazRaw === '0' ? 'LISA (0)' : trazRaw.replace(/;\s*/g, ' - ');
           return `
             <tr class="fila-pista">
               <td><strong>${pIdx === 0 ? idx + 1 : ''}</strong></td>
@@ -130,6 +132,7 @@ export function imprimirOrdenesCorrugado(tiradasInput, stockPapeles = []) {
               </td>
               <td class="num"><strong>${p.largo_mm || 0}</strong></td>
               <td class="num"><strong>${p.ancho_mm || 0}</strong></td>
+              <td class="center"><strong>${trazTexto}</strong></td>
               <td class="num"><strong>${cortes} x ${salidas}</strong></td>
               <td class="num">${planchas}</td>
               <td class="num">${metros}</td>
@@ -205,6 +208,7 @@ export function imprimirOrdenesCorrugado(tiradasInput, stockPapeles = []) {
                 <th>Cliente / Producto</th>
                 <th class="num" style="width:52px;">Largo</th>
                 <th class="num" style="width:52px;">Ancho</th>
+                <th class="center" style="width:74px;">Trazados</th>
                 <th class="num" style="width:76px;">Cortes</th>
                 <th class="num" style="width:62px;">Planchas</th>
                 <th class="num" style="width:56px;">Metros</th>

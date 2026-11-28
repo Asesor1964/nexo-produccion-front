@@ -575,8 +575,51 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
           });
           const data = await res.json();
           alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
+        } else if (header.includes('trazados') && header.includes('producto')) {
+          const splitCSVLinea = (linea) => {
+            const cols = [];
+            let actual = '';
+            let enComillas = false;
+            for (let i = 0; i < linea.length; i++) {
+              const ch = linea[i];
+              if (ch === '"') {
+                enComillas = !enComillas;
+              } else if (ch === ';' && !enComillas) {
+                cols.push(actual.trim());
+                actual = '';
+              } else {
+                actual += ch;
+              }
+            }
+            cols.push(actual.trim());
+            return cols;
+          };
+
+          const mapaTrazados = new Map();
+          lineas.slice(1).forEach((l) => {
+            const c = splitCSVLinea(l);
+            const codProd = String(c[2] || '').trim().toUpperCase();
+            const traz = String(c[5] || '').replace(/"/g, '').trim();
+            if (!codProd) return;
+            if (traz !== '' || !mapaTrazados.has(codProd)) {
+              mapaTrazados.set(codProd, traz);
+            }
+          });
+
+          const trazadoresPayload = Array.from(mapaTrazados.entries()).map(([codigo_producto, trazados]) => ({
+            codigo_producto,
+            trazados
+          }));
+
+          const res = await apiFetch('/api/corrugadora/importar-trazadores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trazadores: trazadoresPayload })
+          });
+          const data = await res.json();
+          alert(res.ok ? `✅ ${data.mensaje}` : `❌ ${data.error}`);
         } else {
-          alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, RECETAS.csv o PENDIENTES DE CORRUGADORA.csv.');
+          alert('⚠️ No se reconoció el formato. Subí CLAVES.csv, REGISTRO DE PAPELES.csv, RECETAS.csv, MACRO_BOBINAS.csv, TRAZADORES.csv o PENDIENTES DE CORRUGADORA.csv.');
         }
         await cargarContexto();
       } catch (err) {
@@ -1503,7 +1546,7 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                       </div>
                     ))}
                   </div>
-                )}
+                )}                 
               </>
             )}
 
@@ -1583,6 +1626,8 @@ export default function PantallaProgramadorCorrugadora({ onIrAStock }) {
                           numero_orden: pm.orden.numero_orden,
                           cliente: pm.orden.cliente,
                           producto_descripcion: pm.orden.producto_descripcion || '',
+                          codigo_producto: pm.orden.codigo_producto || '',
+                          trazados: pm.orden.trazados || '',
                           ancho_mm: pm.orden.ancho_mm,
                           largo_mm: pm.orden.largo_mm,
                           salidas: pm.salidas,
